@@ -82,6 +82,12 @@ void ValueStepper::paint (juce::Graphics& g)
 SequencerLaneComponent::SequencerLaneComponent (DrumKitProcessor& owner, int index)
     : processor (owner), trackIndex (index), header (owner, index)
 {
+    // Every Rng default-constructs to the same seed, so without this each track's die rolled
+    // an identical pattern - the same "random" lane repeated eight times. The multiplier is
+    // Knuth's, which scatters adjacent indices well enough for eight of them.
+    // Seeded per track, or every row's die would roll the same pattern.
+    randomRng.seed (randomSeedForTrack (index));
+
     addAndMakeVisible (header);
     modeBox.setTooltip ("How the pattern is built: an explicit grid, or pulses spread "
                         "evenly across the steps.");
@@ -401,6 +407,8 @@ void SequencerLaneComponent::paint (juce::Graphics& g)
 AutomationLaneComponent::AutomationLaneComponent (DrumKitProcessor& owner, int index)
     : processor (owner), trackIndex (index), header (owner, index)
 {
+    randomRng.seed ((uint32_t) (index + 1) * 2654435761u);
+
     addAndMakeVisible (header);
     speedBox.setTooltip ("How fast the envelope runs.");
     lengthStepper.setBoundsTo (getLocalBounds());

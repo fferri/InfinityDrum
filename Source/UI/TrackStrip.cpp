@@ -10,6 +10,9 @@ namespace df
 TrackStrip::TrackStrip (DrumKitProcessor& owner, int index, EditorUiState& state)
     : processor (owner), trackIndex (index), uiState (state), header (owner, index)
 {
+    // Seeded per track, or every row's RND would roll the same machine.
+    randomRng.seed (randomSeedForTrack (index));
+
     const auto id = [this] (const char* name) { return pid::track (trackIndex, name); };
 
     // ---- Pad ----------------------------------------------------------------

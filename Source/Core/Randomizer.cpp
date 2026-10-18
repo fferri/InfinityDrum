@@ -72,6 +72,12 @@ namespace
     }
 }
 
+uint32_t randomSeedForTrack (int trackIndex) noexcept
+{
+    // Knuth's multiplier scatters adjacent indices well enough for eight of them.
+    return (uint32_t) (trackIndex + 1) * 2654435761u;
+}
+
 void randomiseTriggerLane (TriggerLane& lane, Rng& rng)
 {
     static constexpr LaneSpeed speeds[]
@@ -137,6 +143,18 @@ void randomiseAutomationLane (AutomationLane& lane, Rng& rng)
     for (int i = 1; i < points; ++i)
         lane.points[(size_t) i].position = juce::jmax (lane.points[(size_t) i].position,
                                                         lane.points[(size_t) (i - 1)].position);
+
+    // Sometimes let one interior point land exactly on the one before it. Two points at the
+    // same position with different values is a step rather than a ramp, which is what a lot
+    // of drum automation actually is - a filter that snaps open, a level that drops. The
+    // interpolator returns the later value for a zero-width span, so the jump is exact
+    // instead of a very steep slope.
+    if (points >= 3 && randomInt (rng, 0, 2) != 0)
+    {
+        const int index = randomInt (rng, 1, points - 2);
+
+        lane.points[(size_t) index].position = lane.points[(size_t) (index - 1)].position;
+    }
 
     lane.enabled = true;
 }

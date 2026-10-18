@@ -144,7 +144,10 @@ struct AutomationLane
 {
     bool enabled = false;
     LaneSpeed speed = LaneSpeed::xOne;
-    int length = 4;
+
+    /** Long enough to shape a bar at x1: a four-step envelope at a 1/16 is a quarter of a
+        bar, which is too short to be the default. */
+    int length = 16;
 
     float amount = 0.5f; ///< how much of the parameter's travel the envelope reaches
 

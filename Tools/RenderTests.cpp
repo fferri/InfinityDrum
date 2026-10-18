@@ -2244,6 +2244,54 @@ void testLaneRandomisers()
         check (shapeOk, "the envelope has 2..5 points, all inside the strip");
         check (ordered, "with the points kept in order, so interpolation cannot run backwards");
     }
+
+    // ---- two tracks must not roll the same thing ----
+    // The lane components seed from their track index. Before they did, every Rng started
+    // from the same default and pressing the die once per track filled the page with eight
+    // copies of one pattern.
+    {
+        check (randomSeedForTrack (0) != randomSeedForTrack (1),
+               "each track seeds its die differently");
+
+        Rng first (randomSeedForTrack (0)), second (randomSeedForTrack (1));
+
+        TriggerLane a, b;
+        a.length = 16;
+        b.length = 16;
+
+        randomiseTriggerLane (a, first);
+        randomiseTriggerLane (b, second);
+
+        bool different = a.speed != b.speed || a.trigs != b.trigs || a.offset != b.offset;
+
+        for (int i = 0; i < 16; ++i)
+            different = different || a.steps[(size_t) i].on != b.steps[(size_t) i].on;
+
+        check (different, "two tracks seeded from their index roll different patterns");
+    }
+
+    // ---- a rolled envelope can step rather than only ramp ----
+    {
+        bool anyStep = false;
+
+        for (int roll = 0; roll < 60 && ! anyStep; ++roll)
+        {
+            Rng r (0x1234u + (uint32_t) roll);
+            AutomationLane lane;
+            randomiseAutomationLane (lane, r);
+
+            for (int i = 1; i < lane.numPoints; ++i)
+                anyStep = anyStep
+                            || std::abs (lane.points[(size_t) i].position
+                                           - lane.points[(size_t) (i - 1)].position) < 1.0e-6f;
+        }
+
+        check (anyStep, "a rolled envelope can contain a step, not just ramps");
+    }
+
+    // ---- the automation lane's own default length ----
+    check (AutomationLane {}.length == 16, "an unconfigured automation lane spans 16 steps",
+           juce::String (AutomationLane {}.length));
 }
 
 void testEditorNoteLabels()

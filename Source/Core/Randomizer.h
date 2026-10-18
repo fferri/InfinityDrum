@@ -34,6 +34,14 @@ void randomiseTrack (DrumKitProcessor& processor, int trackIndex, Rng& rng);
     subset - the very slow and very fast ends of the range are rarely what you want and
     would mostly produce a lane that is either inaudible or a blur.
 */
+/** The seed a lane's die starts from.
+
+    Distinct per track on purpose. Every Rng default-constructs to the same seed, so without
+    this each row's die rolled an identical pattern and one press per track filled the page
+    with eight copies of the same sequence.
+*/
+uint32_t randomSeedForTrack (int trackIndex) noexcept;
+
 void randomiseTriggerLane (TriggerLane& lane, Rng& rng);
 
 /** Rolls a fresh breakpoint envelope for the lane, and switches it on.
