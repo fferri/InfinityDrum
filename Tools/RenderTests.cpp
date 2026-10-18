@@ -1222,7 +1222,7 @@ void testKitLibrary()
 
     // ---- XML round-trip ----------------------------------------------------
     const auto xml = kitToXml (captured);
-    check (xml != nullptr && xml->hasTagName ("DRUMFORGE_KIT"), "a kit serialises to XML");
+    check (xml != nullptr && xml->hasTagName ("INFINITYDRUM_KIT"), "a kit serialises to XML");
 
     KitData reparsed;
     check (kitFromXml (*xml, reparsed), "and parses back");

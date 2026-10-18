@@ -5,7 +5,7 @@ namespace df
 
 namespace
 {
-    const juce::Identifier rootType { "DRUMFORGE_SETTINGS" };
+    const juce::Identifier rootType { "INFINITYDRUM_SETTINGS" };
     const char* noteMapProperty = "noteMap";
     const char* fileName = "settings.xml";
 }
@@ -72,7 +72,11 @@ NoteMap loadNoteMapSetting (juce::File directory)
 
     auto xml = juce::XmlDocument::parse (file);
 
-    if (xml == nullptr || ! xml->hasTagName (rootType))
+    // A settings file written before the rename keeps working; it only holds the note map.
+    const bool known = xml != nullptr
+                         && (xml->hasTagName (rootType) || xml->hasTagName ("DRUMFORGE_SETTINGS"));
+
+    if (! known)
         return NoteMap::generalMidi;
 
     const auto stored = xml->getStringAttribute (noteMapProperty);

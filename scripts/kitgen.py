@@ -386,7 +386,7 @@ def build_kit(spec):
 
 
 def to_xml(name, tracks):
-    lines = [f'<DRUMFORGE_KIT name="{xml_escape.escape(name)}" version="1">']
+    lines = [f'<INFINITYDRUM_KIT name="{xml_escape.escape(name)}" version="1">']
 
     for index, t in enumerate(tracks):
         lines.append(
@@ -403,7 +403,7 @@ def to_xml(name, tracks):
 
         lines.append("  </TRACK>")
 
-    lines.append("</DRUMFORGE_KIT>")
+    lines.append("</INFINITYDRUM_KIT>")
     return "\n".join(lines) + "\n"
 
 

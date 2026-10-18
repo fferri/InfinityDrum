@@ -67,7 +67,7 @@ private:
     /** The editor's own processor, already available as `processor` on the base class. */
     DrumKitProcessor& kit() const noexcept { return static_cast<DrumKitProcessor&> (processor); }
 
-    static constexpr int topBarHeight = 70;
+    static constexpr int topBarHeight = 24;
     static constexpr int tabBarHeight = 34;
 
     InfinityDrumLookAndFeel lookAndFeel;

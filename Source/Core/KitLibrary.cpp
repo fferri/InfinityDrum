@@ -107,7 +107,7 @@ KitData factoryKit (int index)
 //==============================================================================
 std::unique_ptr<juce::XmlElement> kitToXml (const KitData& kit)
 {
-    auto xml = std::make_unique<juce::XmlElement> ("DRUMFORGE_KIT");
+    auto xml = std::make_unique<juce::XmlElement> ("INFINITYDRUM_KIT");
     xml->setAttribute ("name", kit.name);
     xml->setAttribute ("version", 1);
 
@@ -146,7 +146,8 @@ std::unique_ptr<juce::XmlElement> kitToXml (const KitData& kit)
 
 bool kitFromXml (const juce::XmlElement& xml, KitData& destination)
 {
-    if (! xml.hasTagName ("DRUMFORGE_KIT"))
+    // Kits saved before the rename carry the old tag; they are otherwise identical.
+    if (! xml.hasTagName ("INFINITYDRUM_KIT") && ! xml.hasTagName ("DRUMFORGE_KIT"))
         return false;
 
     KitData kit;

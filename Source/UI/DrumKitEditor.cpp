@@ -176,11 +176,11 @@ void DrumKitEditor::resized()
     // ---- Top bar -------------------------------------------------------------
     topBarArea = area.removeFromTop (topBarHeight);
     {
-        auto bar = topBarArea.reduced (16, 5);
+        auto bar = topBarArea.reduced (16, 3);
 
         titleArea = bar.removeFromLeft (juce::jmin (200, bar.getWidth() / 4));
 
-        menuButtonArea = bar.removeFromRight (56).withSizeKeepingCentre (56, 26);
+        menuButtonArea = bar.removeFromRight (46).withSizeKeepingCentre (46, 18);
         menuButton.setBounds (menuButtonArea);
         bar.removeFromRight (12);
 
@@ -241,8 +241,8 @@ void DrumKitEditor::paint (juce::Graphics& g)
 
     // ---- Wordmark ------------------------------------------------------------
     g.setColour (theme::accent);
-    g.setFont (theme::font (22.0f, juce::Font::bold));
-    g.drawText ("DRUMFORGE", titleArea, juce::Justification::centredLeft, false);
+    g.setFont (theme::font (15.0f, juce::Font::bold));
+    g.drawText ("InfinityDrum", titleArea, juce::Justification::centredLeft, false);
 
     // ---- Tab bar rule and the mode hint --------------------------------------
     g.setColour (theme::outline);
