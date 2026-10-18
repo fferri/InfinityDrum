@@ -2270,6 +2270,47 @@ void testLaneRandomisers()
         check (different, "two tracks seeded from their index roll different patterns");
     }
 
+    // ---- the speed distribution is weighted towards x1 ----
+    {
+        Rng rng (0x7777u);
+
+        int speedCounts[kNumLaneSpeeds] {};
+
+        constexpr int totalRolls = 8000;
+
+        for (int i = 0; i < totalRolls; ++i)
+        {
+            TriggerLane lane;
+            randomiseTriggerLane (lane, rng);
+            ++speedCounts[(int) lane.speed];
+        }
+
+        const auto share = [&speedCounts] (LaneSpeed speed)
+        {
+            return (float) speedCounts[(int) speed] / (float) totalRolls;
+        };
+
+        // Generous bands: this is checking the shape of the distribution, not the exact
+        // numbers, and a fixed seed makes it deterministic anyway.
+        check (std::abs (share (LaneSpeed::xOne) - 0.5f) < 0.03f,
+               "x1 takes about half the rolls", juce::String (share (LaneSpeed::xOne)));
+        check (std::abs (share (LaneSpeed::xHalf) - 0.125f) < 0.02f
+                 && std::abs (share (LaneSpeed::xTwo) - 0.125f) < 0.02f,
+               "the x1/2 and x2 pair takes about an eighth each");
+        check (std::abs (share (LaneSpeed::xThird) - 0.0625f) < 0.015f
+                 && std::abs (share (LaneSpeed::xThree) - 0.0625f) < 0.015f,
+               "the triplet pair about a sixteenth each");
+        check (share (LaneSpeed::xEighth) > 0.0f && share (LaneSpeed::xEight) > 0.0f
+                 && share (LaneSpeed::xSix) > 0.0f,
+               "and the extremes still turn up");
+
+        for (int i = 0; i < kNumLaneSpeeds; ++i)
+            if ((LaneSpeed) i != LaneSpeed::xOne)
+                check (speedCounts[(int) LaneSpeed::xOne] > speedCounts[i],
+                       ("x1 is more likely than " + juce::String (laneSpeedName ((LaneSpeed) i)))
+                         .toRawUTF8());
+    }
+
     // ---- a rolled envelope can step rather than only ramp ----
     {
         bool anyStep = false;

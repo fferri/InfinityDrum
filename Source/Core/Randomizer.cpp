@@ -78,15 +78,61 @@ uint32_t randomSeedForTrack (int trackIndex) noexcept
     return (uint32_t) (trackIndex + 1) * 2654435761u;
 }
 
-void randomiseTriggerLane (TriggerLane& lane, Rng& rng)
+namespace
 {
-    static constexpr LaneSpeed speeds[]
+    /** The speed distribution: x1 is half the mass, and each progressively faster or slower
+        pair takes half of what is left, so the list reads as "most things are 1/16 notes,
+        with occasional doubles, halves, triplets and extremes".
+
+        x1            50%
+        x1/2, x2      12.5% each
+        x1/3, x3      6.25% each
+        x1/4, x4      3.125% each
+        x6, x8, x1/8  the remaining 6.25%, split three ways
+    */
+    struct SpeedWeight
     {
-        LaneSpeed::xQuarter, LaneSpeed::xThird, LaneSpeed::xHalf,
-        LaneSpeed::xOne, LaneSpeed::xTwo
+        LaneSpeed speed;
+        float weight;
     };
 
-    lane.speed = speeds[rng.nextU32() % (sizeof (speeds) / sizeof (speeds[0]))];
+    constexpr float tail = 1.0f / 48.0f;   // 6.25% / 3
+
+    constexpr SpeedWeight speedWeights[]
+    {
+        { LaneSpeed::xOne,     0.5f },
+        { LaneSpeed::xHalf,    0.125f },
+        { LaneSpeed::xTwo,     0.125f },
+        { LaneSpeed::xThird,   0.0625f },
+        { LaneSpeed::xThree,   0.0625f },
+        { LaneSpeed::xQuarter, 0.03125f },
+        { LaneSpeed::xFour,    0.03125f },
+        { LaneSpeed::xEighth,  tail },
+        { LaneSpeed::xSix,     tail },
+        { LaneSpeed::xEight,   tail },
+    };
+
+    LaneSpeed rollSpeed (Rng& rng) noexcept
+    {
+        const float roll = rng.nextUnipolar();
+        float accumulated = 0.0f;
+
+        for (const auto& entry : speedWeights)
+        {
+            accumulated += entry.weight;
+
+            if (roll < accumulated)
+                return entry.speed;
+        }
+
+        // Only reachable if the weights sum to just under 1 in floating point.
+        return LaneSpeed::xOne;
+    }
+}
+
+void randomiseTriggerLane (TriggerLane& lane, Rng& rng)
+{
+    lane.speed = rollSpeed (rng);
     lane.enabled = true;
 
     if (lane.mode == TriggerMode::euclidean)
