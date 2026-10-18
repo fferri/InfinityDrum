@@ -2272,7 +2272,7 @@ void testLaneRandomisers()
 
     // ---- the speed distribution is weighted towards x1 ----
     {
-        Rng rng (0x7777u);
+        Rng speedRng (0x7777u);
 
         int speedCounts[kNumLaneSpeeds] {};
 
@@ -2281,7 +2281,7 @@ void testLaneRandomisers()
         for (int i = 0; i < totalRolls; ++i)
         {
             TriggerLane lane;
-            randomiseTriggerLane (lane, rng);
+            randomiseTriggerLane (lane, speedRng);
             ++speedCounts[(int) lane.speed];
         }
 
