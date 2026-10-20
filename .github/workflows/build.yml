@@ -82,11 +82,22 @@ jobs:
           # the executable bit, which matters for the script.
           stage=$(mktemp -d)
           cp -R build/InfinityDrum_artefacts/Release/VST3/InfinityDrum.vst3 "$stage/"
+          cp -R build/InfinityDrum_artefacts/Release/AU/InfinityDrum.component "$stage/"
           cp scripts/install-macos.sh "$stage/"
           chmod +x "$stage/install-macos.sh"
 
+          # The Audio Unit is validated here as well as built: auval is Apple's own
+          # validator and is the only thing that proves an AU actually loads in a host.
+          echo "validating the Audio Unit"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          rm -rf "$HOME/Library/Audio/Plug-Ins/Components/InfinityDrum.component"
+          cp -R "$stage/InfinityDrum.component" "$HOME/Library/Audio/Plug-Ins/Components/"
+          auval -v aumu In01 Infa | tee auval.log | tail -5
+          grep -q "AU VALIDATION SUCCEEDED" auval.log
+
           out="$PWD/InfinityDrum-macOS-universal.zip"
-          ( cd "$stage" && zip -q -r -y "$out" InfinityDrum.vst3 install-macos.sh )
+          ( cd "$stage" && zip -q -r -y "$out" InfinityDrum.vst3 InfinityDrum.component install-macos.sh )
           rm -rf "$stage"
 
           unzip -l InfinityDrum-macOS-universal.zip

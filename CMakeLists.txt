@@ -55,7 +55,9 @@ juce_add_plugin(InfinityDrum
     BUNDLE_ID "com.infinitydrumaudio.infinitydrum"
     PLUGIN_MANUFACTURER_CODE Infa
     PLUGIN_CODE In01
-    FORMATS VST3
+    # AU is Apple-only; JUCE skips it on other platforms, so the Windows build simply
+    # produces the VST3.
+    FORMATS VST3 AU
     PRODUCT_NAME "InfinityDrum"
     DESCRIPTION "Eight-track drum and percussion synthesiser"
     IS_SYNTH TRUE
@@ -83,11 +85,20 @@ target_compile_definitions(InfinityDrum PUBLIC
 # and seals whatever is actually in the bundle by then. The verify command is deliberate: a
 # regression should fail the build, not ship quietly.
 if(APPLE)
-    add_custom_command(TARGET InfinityDrum_VST3 POST_BUILD
-        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:InfinityDrum_VST3>"
-        COMMAND codesign --verify --verbose=2 "$<TARGET_BUNDLE_DIR:InfinityDrum_VST3>"
-        COMMENT "Re-signing InfinityDrum.vst3 after moduleinfo.json is written"
-        VERBATIM)
+    # Both bundles have to be signed again once their post-build steps have run. The VST3
+    # because JUCE writes moduleinfo.json after the link, and the AU because its Info.plist
+    # appears after CMake signs it - either way the signature ends up describing a bundle
+    # that no longer matches, which macOS reports as an invalid signature.
+    #
+    # Registering these after juce_add_plugin puts them after JUCE's own post-build
+    # commands, and the verify makes a regression fail the build rather than ship.
+    foreach(bundle_target InfinityDrum_VST3 InfinityDrum_AU)
+        add_custom_command(TARGET ${bundle_target} POST_BUILD
+            COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:${bundle_target}>"
+            COMMAND codesign --verify --verbose=2 "$<TARGET_BUNDLE_DIR:${bundle_target}>"
+            COMMENT "Re-signing ${bundle_target} after its post-build steps"
+            VERBATIM)
+    endforeach()
 endif()
 
 #===============================================================================

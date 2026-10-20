@@ -588,6 +588,21 @@ reach into the plugin's internals.
   instead, because GitHub turns those into check-run annotations and *annotations* are
   readable without admin rights. That is also how the Windows-only test failure was found.
 
+### Audio Unit
+
+The macOS build produces an AU alongside the VST3. JUCE gates the AU format on the platform
+(`_juce_get_platform_plugin_kinds` only returns it for Darwin), so the Windows build simply
+produces the VST3 and no conditional is needed in `CMakeLists.txt`.
+
+The AU needed the same re-sign as the VST3, for a different reason: CMake signs the bundle
+at link time, and the AU's `Info.plist` appears after that, so the signature described a
+bundle that no longer matched. Both bundles now go through one `foreach` that signs and
+verifies after their post-build steps have run.
+
+CI runs `auval` on the built AU. That is Apple's own validator and the only thing that
+proves an AU actually loads in a host - a clean `codesign` says nothing about whether the
+component registers, renders or handles MIDI.
+
 ### Code signing on macOS
 
 CMake signs the bundle as part of *linking*, but JUCE writes
@@ -724,4 +739,3 @@ bug, which is why they are written down rather than left implicit.
 - **No user preset for the global note map beyond the preference file.** It is a session
   parameter whose default comes from a global file; a full preset browser for it would be
   disproportionate.
-- **No AU build.** VST3 only, which is a `FORMATS` line away if it is ever wanted.

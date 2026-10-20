@@ -201,7 +201,7 @@ the test suite, and attaches the packages to the run:
 
 | Platform | Artifact |
 |---|---|
-| macOS | `InfinityDrum-macOS-universal.zip` — Intel and Apple Silicon in one binary, plus the install script |
+| macOS | `InfinityDrum-macOS-universal.zip` — VST3 and AU, Intel and Apple Silicon in one binary, plus the install script |
 | Windows | `InfinityDrum-Windows-x64.zip` |
 
 Pushing a tag starting with `v` turns a build into a release, with both packages attached

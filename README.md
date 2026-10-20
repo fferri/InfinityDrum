@@ -1,6 +1,6 @@
 # InfinityDrum
 
-An 8-track drum and percussion **VST3 instrument**. Every track can load any of its
+An 8-track drum and percussion **VST3 and Audio Unit instrument**. Every track can load any of its
 **synthesis engines**, covering conventional drum synthesis through to inharmonic metal,
 wavefolding and sub drones. There are no samples anywhere in the plugin.
 
@@ -29,23 +29,32 @@ the plugin:
 ./install-macos.sh
 ```
 
-That copies `InfinityDrum.vst3` into `~/Library/Audio/Plug-Ins/VST3` and clears the
-**quarantine** flag. The flag is the part that matters: a browser download sets it, and
-Gatekeeper refuses to load quarantined code, so without this step most DAWs will not see
-the plugin at all.
+That installs both formats where DAWs look for them and clears the **quarantine** flag:
 
-Pass a path to install somewhere else, or do it by hand instead:
+| Format | Goes to |
+|---|---|
+| VST3 | `~/Library/Audio/Plug-Ins/VST3/InfinityDrum.vst3` |
+| Audio Unit | `~/Library/Audio/Plug-Ins/Components/InfinityDrum.component` |
+
+The flag is the part that matters: a browser download sets it, and Gatekeeper refuses to
+load quarantined code, so without this step most DAWs will not see the plugins at all.
+
+Pass a path to install only the VST3 somewhere else, or do it by hand instead:
 
 ```sh
 ./install-macos.sh /Library/Audio/Plug-Ins/VST3
 
 # or, by hand:
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/InfinityDrum.vst3
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/InfinityDrum.component
 ```
 
 One binary covers both Intel and Apple Silicon. It is not notarised — that needs a paid
 Apple Developer account — so the quarantine step is unavoidable for a browser download.
 Downloading from a terminal (`curl`, `gh release download`) sets no flag at all.
+
+The Audio Unit is validated with Apple's own `auval` before the package is built, so it is
+known to load in a host rather than merely to have compiled.
 
 ### Windows
 
