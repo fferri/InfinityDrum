@@ -184,10 +184,12 @@ flat until you ask for dynamics. Modulation is latched at note-on, so a ringing 
 the character it was struck with while other tracks move on.
 
 A modulated knob shows three things: the **pointer** at the value you dialled, a coloured
-**band** spanning every position velocity can reach, and a **dot** where the most recent hit
-actually landed. The band is a gradient, cool for a soft hit and hot for a hard one, and it
-is coloured by velocity rather than by screen position — so a negative depth visibly
-*reverses* the gradient rather than merely sliding it.
+**band** on an inner track spanning every position velocity can reach, and a **dot** where the
+most recent hit actually landed. The band is a gradient, cool for a soft hit and hot for a hard
+one, and it is coloured by velocity rather than by screen position — so a negative depth
+visibly *reverses* the gradient rather than merely sliding it. Hovering a knob makes it glow and
+reveals the small handles at the band's ends; at rest the dial stays quiet, which is what keeps
+a screen of seventy of them readable.
 
 | Gesture | Effect |
 |---|---|

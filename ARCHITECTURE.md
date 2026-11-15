@@ -433,7 +433,8 @@ measuring the previous hit still ringing. It now renders past the decay first.
 `InfinityDrumLookAndFeel` deliberately does **not** implement `drawRotarySlider`. A LookAndFeel
 instance serves every control in the editor, so it cannot hold per-knob state like a
 modulation depth. `VelocityKnob` is a `Slider` subclass that draws its own band, dot and
-pointer, and handles rim-drag for depth.
+pointer, and handles rim-drag for depth. The dial is quiet at rest: the glow and the two
+handles marking the band's ends are hover affordances only.
 
 ### The band and the audio share one implementation
 
@@ -490,8 +491,10 @@ Smaller decisions, each of which was made for a reason:
   the pointer does, including on a skewed range.
 - **Depth handles are drawn on top of the value arc**, so the arc cannot bury the thing you
   are meant to grab.
-- **The band is drawn wide but sheer** — wide enough to read as a range, translucent enough
-  that the crisp value arc on top still wins.
+- **The band sits on an inner orbit, not on the ring** — so the range and the value never
+  compete, and the pointer can meet the value arc without a node between them.
+- **Glow and the band's end handles are hover-only.** With seventy-odd knobs on screen the
+  resting state has to stay quiet; hovering is what makes a dial announce itself.
 - **The level meter floors at −60 dB** and normalises over `(dB + 48) / 54`, going hot above
   0.86.
 - **The editor ticks at 30 Hz**, enough for meters and pad glow without repainting the window

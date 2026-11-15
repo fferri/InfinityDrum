@@ -7,8 +7,6 @@ namespace
 {
     /** Pixels of vertical drag for a full -1..+1 sweep of the depth. */
     constexpr float depthDragPixels = 180.0f;
-
-    constexpr float bandSegments = 14.0f;
 }
 
 //==============================================================================
@@ -60,9 +58,12 @@ VelocityKnob::Geometry VelocityKnob::getGeometry() const
 
     Geometry geometry;
     geometry.centre = bounds.getCentre();
-    geometry.lineWidth = juce::jmax (2.0f, radius * 0.16f);
+    geometry.radius = radius;
+    geometry.lineWidth = juce::jmax (2.0f, radius * 0.11f);
     geometry.arcRadius = juce::jmax (1.0f, radius - geometry.lineWidth * 0.5f);
     geometry.bodyRadius = juce::jmax (2.0f, geometry.arcRadius - geometry.lineWidth * 0.85f);
+    geometry.bandRadius = radius * 0.78f;
+    geometry.bandWidth = juce::jmax (2.0f, radius * 0.13f);
     geometry.startAngle = params.startAngleRadians;
     geometry.endAngle = params.endAngleRadians;
 
@@ -98,126 +99,176 @@ void VelocityKnob::paint (juce::Graphics& g)
     const auto trackColour = findColour (juce::Slider::rotarySliderOutlineColourId);
     const bool armed = uiState.isModulationMode();
 
-    const float centre = getCentrePosition();
+    const float value = getCentrePosition();
     const float depth = getDepth();
     const bool modulated = std::abs (depth) > 1.0e-6f;
 
-    // ---- full sweep track -------------------------------------------------
+    const auto pointAt = [&] (float r, float normalised)
     {
-        juce::Path track;
-        track.addCentredArc (geometry.centre.x, geometry.centre.y, geometry.arcRadius,
-                             geometry.arcRadius, 0.0f, geometry.startAngle, geometry.endAngle, true);
-        g.setColour (trackColour);
-        g.strokePath (track, juce::PathStrokeType (geometry.lineWidth,
-                                                   juce::PathStrokeType::curved,
-                                                   juce::PathStrokeType::rounded));
+        const float angle = geometry.angleFor (normalised);
+        return juce::Point<float> (geometry.centre.x + r * std::sin (angle),
+                                   geometry.centre.y - r * std::cos (angle));
+    };
+
+    const auto arcPath = [&] (float from, float to)
+    {
+        juce::Path path;
+        path.addCentredArc (geometry.centre.x, geometry.centre.y, geometry.arcRadius,
+                            geometry.arcRadius, 0.0f, from, to, true);
+        return path;
+    };
+
+    const auto pathAt = [&] (float r, float from, float to)
+    {
+        juce::Path path;
+        path.addCentredArc (geometry.centre.x, geometry.centre.y, r, r, 0.0f, from, to, true);
+        return path;
+    };
+
+    const auto strokeGlow = [&] (const juce::Path& path, juce::Colour colour,
+                                 float width, float spread, int layers)
+    {
+        for (int i = layers; i >= 1; --i)
+        {
+            const float k = (float) i / (float) layers;
+            g.setColour (colour.withMultipliedAlpha (0.26f * (1.0f - 0.45f * k)));
+            g.strokePath (path, juce::PathStrokeType (width + spread * 2.0f * k,
+                                                      juce::PathStrokeType::curved,
+                                                      juce::PathStrokeType::rounded));
+        }
+
+        g.setColour (colour);
+        g.strokePath (path, juce::PathStrokeType (width, juce::PathStrokeType::curved,
+                                                  juce::PathStrokeType::rounded));
+    };
+
+    // ---- body ---------------------------------------------------------------
+    {
+        const auto body = juce::Rectangle<float> (geometry.bodyRadius * 2.0f,
+                                                  geometry.bodyRadius * 2.0f)
+                              .withCentre (geometry.centre);
+
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff252b34), geometry.centre.x, body.getY(),
+                                                 juce::Colour (0xff0a0d11), geometry.centre.x, body.getBottom(),
+                                                 false));
+        g.fillEllipse (body);
+
+        g.setColour (juce::Colours::white.withAlpha (0.055f));
+        g.drawEllipse (body.reduced (geometry.bodyRadius * 0.16f), 1.0f);
     }
 
-    // ---- velocity band ----------------------------------------------------
+    // ---- velocity band, on an inner orbit ------------------------------------
     if (modulated)
     {
-        const float softEnd = juce::jlimit (0.0f, 1.0f, centre - depth);
-        const float hardEnd = juce::jlimit (0.0f, 1.0f, centre + depth);
+        const float softEnd = juce::jlimit (0.0f, 1.0f, value - depth);
+        const float hardEnd = juce::jlimit (0.0f, 1.0f, value + depth);
         const float low = juce::jmin (softEnd, hardEnd);
         const float high = juce::jmax (softEnd, hardEnd);
 
         if (high - low > 1.0e-4f)
         {
-            // Wide enough to read as a range, sheer enough that the crisp value arc
-            // drawn on top of it still clearly wins.
-            const auto bandWidth = geometry.lineWidth * 2.0f;
+            // A dark bed keeps the band reading the same over the body edge and the panel.
+            g.setColour (juce::Colour (0xff0a0c10));
+            g.strokePath (pathAt (geometry.bandRadius, geometry.angleFor (low),
+                                  geometry.angleFor (high)),
+                          juce::PathStrokeType (geometry.bandWidth, juce::PathStrokeType::curved,
+                                                juce::PathStrokeType::butt));
 
-            for (int i = 0; i < (int) bandSegments; ++i)
+            constexpr int segments = 28;
+            const float step = (high - low) / (float) segments;
+
+            for (int i = 0; i < segments; ++i)
             {
-                const float t0 = low + (high - low) * (float) i / bandSegments;
-                const float t1 = low + (high - low) * (float) (i + 1) / bandSegments;
+                // Overlapping segments, so antialiased seams do not read as blocks.
+                const float t0 = juce::jlimit (0.0f, 1.0f, low + step * ((float) i - 0.5f));
+                const float t1 = juce::jlimit (0.0f, 1.0f, low + step * ((float) i + 1.5f));
                 const float middle = 0.5f * (t0 + t1);
+                const float velocity = juce::jlimit (0.0f, 1.0f,
+                                                     0.5f + 0.5f * (middle - value) / depth);
 
-                // Colour by the velocity that lands here, not by position, so a negative
-                // depth reverses the gradient instead of merely sliding it.
-                const float velocityFraction = juce::jlimit (0.0f, 1.0f,
-                                                             0.5f + 0.5f * (middle - centre) / depth);
-
-                juce::Path segment;
-                segment.addCentredArc (geometry.centre.x, geometry.centre.y, geometry.arcRadius,
-                                       geometry.arcRadius, 0.0f,
-                                       geometry.angleFor (t0), geometry.angleFor (t1), true);
-                g.setColour (theme::velocitySoft.interpolatedWith (theme::velocityHard, velocityFraction)
-                                 .withAlpha (0.36f));
-                g.strokePath (segment, juce::PathStrokeType (bandWidth,
-                                                             juce::PathStrokeType::curved,
-                                                             juce::PathStrokeType::rounded));
+                g.setColour (theme::velocitySoft.interpolatedWith (theme::velocityHard, velocity)
+                                 .withAlpha (0.45f));
+                g.strokePath (pathAt (geometry.bandRadius, geometry.angleFor (t0),
+                                      geometry.angleFor (t1)),
+                              juce::PathStrokeType (geometry.bandWidth, juce::PathStrokeType::curved,
+                                                    juce::PathStrokeType::butt));
             }
         }
     }
 
-    // ---- value arc --------------------------------------------------------
-    if (centre > 0.002f)
+    // ---- full sweep track ----------------------------------------------------
+    // Half the value arc's weight: a groove the bright arc sits over, not a second arc.
+    g.setColour (trackColour.withAlpha (0.85f));
+    g.strokePath (arcPath (geometry.startAngle, geometry.endAngle),
+                  juce::PathStrokeType (juce::jmax (1.0f, geometry.lineWidth * 0.5f),
+                                        juce::PathStrokeType::curved,
+                                        juce::PathStrokeType::rounded));
+
+    // ---- pointer, under the ring so the two meet without a blob --------------
     {
-        juce::Path value;
-        value.addCentredArc (geometry.centre.x, geometry.centre.y, geometry.arcRadius,
-                             geometry.arcRadius, 0.0f,
-                             geometry.startAngle, geometry.angleFor (centre), true);
-        g.setColour (armed ? fillColour.withAlpha (0.35f) : fillColour);
-        g.strokePath (value, juce::PathStrokeType (geometry.lineWidth,
-                                                   juce::PathStrokeType::curved,
-                                                   juce::PathStrokeType::rounded));
-    }
+        const float pointerWidth = juce::jmax (2.0f, geometry.radius * 0.08f);
 
-    // ---- body -------------------------------------------------------------
-    const auto body = juce::Rectangle<float> (geometry.bodyRadius * 2.0f,
-                                              geometry.bodyRadius * 2.0f).withCentre (geometry.centre);
+        // The rounded cap's outer edge lands on the ring's inner edge, so the line
+        // meets the arc instead of bulging through it.
+        const float tipRadius = geometry.arcRadius
+                                  - (pointerWidth * 0.5f + geometry.lineWidth * 0.5f);
 
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3d434c), geometry.centre.x,
-                                             geometry.centre.y - geometry.bodyRadius,
-                                             juce::Colour (0xff1f232a), geometry.centre.x,
-                                             geometry.centre.y + geometry.bodyRadius, false));
-    g.fillEllipse (body);
-
-    g.setColour (armed ? theme::velocityHard.withAlpha (0.65f) : juce::Colour (0xff0f1114));
-    g.drawEllipse (body, armed ? 1.6f : 1.0f);
-
-    // ---- pointer at the dialled value -------------------------------------
-    {
         juce::Path pointer;
-        const auto thickness = juce::jmax (1.6f, geometry.bodyRadius * 0.16f);
-        const auto length = geometry.bodyRadius * 0.62f;
+        pointer.startNewSubPath (pointAt (geometry.radius * 0.34f, value));
+        pointer.lineTo (pointAt (tipRadius, value));
 
-        pointer.addRoundedRectangle (-thickness * 0.5f, -geometry.bodyRadius * 0.86f,
-                                     thickness, length, thickness * 0.5f);
-        pointer.applyTransform (juce::AffineTransform::rotation (geometry.angleFor (centre))
-                                    .translated (geometry.centre));
+        if (hovering)
+            strokeGlow (pointer, fillColour, pointerWidth, geometry.radius * 0.05f, 4);
 
-        g.setColour (armed ? fillColour.withAlpha (0.3f) : fillColour.brighter (0.4f));
-        g.fillPath (pointer);
+        g.setColour (armed ? fillColour.withAlpha (0.55f) : fillColour.brighter (0.35f));
+        g.strokePath (pointer, juce::PathStrokeType (pointerWidth, juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
     }
 
-    // ---- depth handles, on top so the value arc cannot bury them ----------
-    if (modulated)
+    // ---- value arc -----------------------------------------------------------
+    if (value > 0.002f)
     {
-        const float softEnd = juce::jlimit (0.0f, 1.0f, centre - depth);
-        const float hardEnd = juce::jlimit (0.0f, 1.0f, centre + depth);
+        const auto valuePath = arcPath (geometry.startAngle, geometry.angleFor (value));
+
+        if (hovering)
+        {
+            strokeGlow (valuePath, fillColour, geometry.lineWidth, geometry.radius * 0.06f, 6);
+        }
+        else
+        {
+            g.setColour (armed ? fillColour.withAlpha (0.35f) : fillColour);
+            g.strokePath (valuePath, juce::PathStrokeType (geometry.lineWidth,
+                                                           juce::PathStrokeType::curved,
+                                                           juce::PathStrokeType::rounded));
+        }
+    }
+
+    // ---- drag clue: the band's ends, on hover only ---------------------------
+    if (modulated && hovering)
+    {
+        const float softEnd = juce::jlimit (0.0f, 1.0f, value - depth);
+        const float hardEnd = juce::jlimit (0.0f, 1.0f, value + depth);
 
         for (int end = 0; end < 2; ++end)
         {
             const float position = end == 0 ? softEnd : hardEnd;
             const auto colour = end == 0 ? theme::velocitySoft : theme::velocityHard;
-            const auto point = geometry.pointAt (position);
-            const auto size = geometry.lineWidth * (hovering || armed ? 1.4f : 1.05f);
+            const auto point = pointAt (geometry.bandRadius, position);
+            const auto size = juce::jmax (2.0f, geometry.radius * 0.10f);
 
-            g.setColour (juce::Colours::black.withAlpha (0.5f));
-            g.fillEllipse (juce::Rectangle<float> (size * 1.5f, size * 1.5f).withCentre (point));
-            g.setColour (colour.brighter (0.25f));
+            g.setColour (juce::Colours::black.withAlpha (0.6f));
+            g.fillEllipse (juce::Rectangle<float> (size * 1.7f, size * 1.7f).withCentre (point));
+            g.setColour (colour.brighter (0.3f));
             g.fillEllipse (juce::Rectangle<float> (size, size).withCentre (point));
         }
     }
 
-    // ---- dot at where the last hit actually landed ------------------------
+    // ---- dot at where the last hit actually landed ---------------------------
     if (modulated)
     {
         const float bipolar = velocityBipolar (processor.getLastVelocity (trackIndex));
-        const float effective = juce::jlimit (0.0f, 1.0f, centre + depth * bipolar);
-        const auto point = geometry.pointAt (effective);
+        const float effective = juce::jlimit (0.0f, 1.0f, value + depth * bipolar);
+        const auto point = pointAt (geometry.arcRadius, effective);
 
         g.setColour (juce::Colours::black.withAlpha (0.6f));
         g.fillEllipse (juce::Rectangle<float> (geometry.lineWidth * 2.0f,
@@ -225,13 +276,6 @@ void VelocityKnob::paint (juce::Graphics& g)
         g.setColour (juce::Colours::white.withAlpha (0.95f));
         g.fillEllipse (juce::Rectangle<float> (geometry.lineWidth * 1.25f,
                                                geometry.lineWidth * 1.25f).withCentre (point));
-    }
-
-    // ---- hover ------------------------------------------------------------
-    if (hovering && ! armed)
-    {
-        g.setColour (juce::Colours::white.withAlpha (0.16f));
-        g.drawEllipse (body, 1.0f);
     }
 }
 

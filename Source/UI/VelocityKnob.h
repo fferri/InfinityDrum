@@ -22,6 +22,11 @@ namespace df
 
     On the MOD page the whole knob edits depth instead of value, so the target is large and
     obvious and the numeric readout switches to showing the depth.
+
+    The dial is mostly dark: a bright value arc, a short radial pointer that ends where that
+    arc does, and the velocity range as a band on an inner orbit. The glow and the band's end
+    handles are hover affordances only - at rest the knob stays quiet, which matters with
+    seventy-odd of them on screen.
 */
 class VelocityKnob final : public juce::Slider
 {
@@ -56,8 +61,11 @@ private:
     struct Geometry
     {
         juce::Point<float> centre;
+        float radius = 0.0f;
         float arcRadius = 0.0f;
         float bodyRadius = 0.0f;
+        float bandRadius = 0.0f;
+        float bandWidth = 0.0f;
         float lineWidth = 0.0f;
         float startAngle = 0.0f;
         float endAngle = 0.0f;
