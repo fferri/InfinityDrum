@@ -1723,6 +1723,107 @@ void testSequencerCore()
                juce::String (output.numTriggers));
     }
 
+    // ---- a retriggered step fires more than once, inside its own duration ----
+    {
+        SequencerState state;
+        state.triggers[0].mode = TriggerMode::grid;
+        state.triggers[0].enabled = true;
+        state.triggers[0].speed = LaneSpeed::xQuarter;   // one beat per step
+        state.triggers[0].length = 1;
+
+        auto& step = state.triggers[0].steps[0];
+        step.on = true;
+        step.retrig = 3;
+
+        SequencerTransport transport;
+        SequencerOutput output;
+
+        // One beat is 1000 samples here, so three hits land at 0, 333 and 667.
+        transport.advance (state, 0.0, 0.001, 1000, true, output);
+
+        check (output.numTriggers == 3,
+               "a retrig 3 step fires three times in its step",
+               juce::String (output.numTriggers));
+
+        check (output.numTriggers == 3
+                 && output.triggers[0].sampleOffset == 0
+                 && output.triggers[1].sampleOffset == 333
+                 && output.triggers[2].sampleOffset == 667,
+               "evenly spaced across the step",
+               juce::String (output.triggers[0].sampleOffset) + "/"
+                 + juce::String (output.numTriggers > 1 ? output.triggers[1].sampleOffset : -1) + "/"
+                 + juce::String (output.numTriggers > 2 ? output.triggers[2].sampleOffset : -1));
+    }
+
+    // ---- retriggers that fall in a later block are not lost ----
+    // The transport walks steps, and a step's later hits can land past the block that
+    // scheduled it; the next block has to pick them up from the same step.
+    {
+        SequencerState state;
+        state.triggers[0].mode = TriggerMode::grid;
+        state.triggers[0].enabled = true;
+        state.triggers[0].speed = LaneSpeed::xQuarter;
+        state.triggers[0].length = 1;
+        state.triggers[0].steps[0].on = true;
+        state.triggers[0].steps[0].retrig = 3;
+
+        SequencerTransport transport;
+        SequencerOutput output;
+
+        std::array<int, 8> hits {};
+        int numHits = 0;
+
+        for (int block = 0; block < 10 && numHits < (int) hits.size(); ++block)
+        {
+            transport.advance (state, (double) block * 0.1, 0.001, 100, true, output);
+
+            for (int i = 0; i < output.numTriggers && numHits < (int) hits.size(); ++i)
+                hits[(size_t) numHits++] = block * 100 + output.triggers[(size_t) i].sampleOffset;
+        }
+
+        check (numHits == 3 && hits[0] == 0 && hits[1] == 333 && hits[2] == 667,
+               "the two hits after the block boundary still fire, in place",
+               juce::String (numHits) + " hits");
+    }
+
+    // ---- retriggers ramp between the two velocities ----
+    {
+        SequencerState state;
+        state.triggers[0].mode = TriggerMode::grid;
+        state.triggers[0].enabled = true;
+        state.triggers[0].speed = LaneSpeed::xQuarter;
+        state.triggers[0].length = 1;
+
+        auto& step = state.triggers[0].steps[0];
+        step.on = true;
+        step.retrig = 3;
+        step.velocity = 30.0f;
+        step.endVelocity = 120.0f;
+
+        SequencerTransport transport;
+        SequencerOutput output;
+
+        transport.advance (state, 0.0, 0.001, 1000, true, output);
+
+        const auto near = [] (float a, float b) { return std::abs (a - b) < 1.0e-4f; };
+
+        check (output.numTriggers == 3
+                 && near (output.triggers[0].velocity, 30.0f / 127.0f)
+                 && near (output.triggers[1].velocity, 75.0f / 127.0f)
+                 && near (output.triggers[2].velocity, 120.0f / 127.0f),
+               "a retriggered step ramps from its velocity to its end velocity",
+               juce::String (output.numTriggers > 2 ? output.triggers[2].velocity * 127.0f : -1.0f, 1));
+
+        // A step that fires once has no ramp to draw, however it was left set.
+        state.triggers[0].steps[0].retrig = 1;
+        transport.advance (state, 0.0, 0.001, 1000, true, output);
+
+        check (output.numTriggers == 1
+                 && near (output.triggers[0].velocity, 30.0f / 127.0f),
+               "a plain step ignores its end velocity",
+               juce::String (output.numTriggers > 0 ? output.triggers[0].velocity * 127.0f : -1.0f, 1));
+    }
+
     // ---- every step in the block, not just the last ----
     {
         SequencerState state;
@@ -2041,6 +2142,8 @@ void testSequencerPersistence()
         lanes.triggers[1].steps[(size_t) i].on = (i % 2) == 0;
 
     lanes.triggers[1].steps[2].velocity = 64.0f;
+    lanes.triggers[1].steps[3].retrig = 3;
+    lanes.triggers[1].steps[3].endVelocity = 42.0f;
 
     auto& panic = lanes.automation[0][(size_t) ModTarget::pan];
     panic.enabled = true;
@@ -2082,6 +2185,14 @@ void testSequencerPersistence()
            "a step's velocity comes back with it",
            juce::String (back.triggers[1].steps[2].velocity));
 
+    check (back.triggers[1].steps[3].retrig == 3,
+           "and so does its retrigger count",
+           juce::String (back.triggers[1].steps[3].retrig));
+
+    check (std::abs (back.triggers[1].steps[3].endVelocity - 42.0f) < 1.0e-3f,
+           "and the velocity the ramp ends on",
+           juce::String (back.triggers[1].steps[3].endVelocity));
+
     // The lane is stored under the parameter it automates, so reading it back by that index
     // is itself the check that the target survived.
     const auto& automation = back.automation[0][(size_t) ModTarget::pan];
@@ -2109,6 +2220,30 @@ void testSequencerPersistence()
         check (stale.triggers[3].length == 16 && stale.triggers[3].enabled,
                "a session with no lane data falls back to the defaults",
                juce::String (stale.triggers[3].length));
+
+        // The same applies one level down: a session saved before retriggers existed has
+        // no `retrigs` property, and its steps must decode as plain ones.
+        SequencerState withRetrig;
+        withRetrig.triggers[0].steps[0].on = true;
+        withRetrig.triggers[0].steps[0].retrig = 4;
+        withRetrig.triggers[0].steps[0].velocity = 40.0f;
+        withRetrig.triggers[0].steps[0].endVelocity = 90.0f;
+
+        auto older = sequencerStateToValueTree (withRetrig);
+        older.getChild (0).removeProperty ("retrigs", nullptr);
+        older.getChild (0).removeProperty ("endVelocities", nullptr);
+
+        SequencerState decoded;
+        sequencerStateFromValueTree (older, decoded);
+
+        check (decoded.triggers[0].steps[0].on && decoded.triggers[0].steps[0].retrig == 1,
+               "a session saved before retriggers decodes them as plain steps",
+               juce::String (decoded.triggers[0].steps[0].retrig));
+
+        check (std::abs (decoded.triggers[0].steps[0].endVelocity
+                           - decoded.triggers[0].steps[0].velocity) < 1.0e-3f,
+               "and gets no end velocity, so nothing ramps by accident",
+               juce::String (decoded.triggers[0].steps[0].endVelocity));
     }
 }
 
@@ -2206,6 +2341,45 @@ void testLaneRandomisers()
         check (anyOn && anyOff, "a rolled grid has both steps on and steps off");
         check (valid, "every rolled velocity is inside 40..127");
         check (euclideanSane, "a rolled Euclidean lane has playable trigs and offset");
+    }
+
+    // ---- retriggers: three quarters plain, the rest 2-4 ----
+    {
+        Rng retrigRng (0x9e3779b9u);
+        int ones = 0, twos = 0, threes = 0, fours = 0, total = 0;
+        bool inRange = true, flat = true;
+
+        for (int roll = 0; roll < 160; ++roll)
+        {
+            TriggerLane lane;
+            lane.length = 16;
+            randomiseTriggerLane (lane, retrigRng);
+
+            for (int i = 0; i < lane.length; ++i)
+            {
+                const int count = lane.steps[(size_t) i].retrig;
+
+                inRange = inRange && count >= 1 && count <= 4;
+                flat = flat && std::abs (lane.steps[(size_t) i].endVelocity
+                                           - lane.steps[(size_t) i].velocity) < 1.0e-4f;
+                ones += (count == 1);
+                twos += (count == 2);
+                threes += (count == 3);
+                fours += (count == 4);
+                ++total;
+            }
+        }
+
+        const double share = (double) ones / (double) juce::jmax (1, total);
+
+        check (inRange, "every rolled retrigger count is between 1 and 4");
+        check (share > 0.70 && share < 0.80,
+               "and about three quarters of the steps stay plain",
+               juce::String (share, 3));
+        check (twos > 0 && threes > 0 && fours > 0,
+               "with 2, 3 and 4 all turning up",
+               juce::String (twos) + "/" + juce::String (threes) + "/" + juce::String (fours));
+        check (flat, "and every rolled step is flat, with no ramp to its end velocity");
     }
 
     // ---- automation lanes ----

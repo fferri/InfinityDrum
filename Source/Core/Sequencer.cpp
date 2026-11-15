@@ -130,6 +130,27 @@ float TriggerLane::velocityForStep (int step) const noexcept
     return juce::jlimit (0.0f, 1.0f, velocity / 127.0f);
 }
 
+int TriggerLane::retriggersForStep (int step) const noexcept
+{
+    if (! isStepOn (step) || mode != TriggerMode::grid)
+        return 1;
+
+    return juce::jlimit (1, 4, steps[(size_t) juce::jlimit (0, kMaxLaneSteps - 1, step)].retrig);
+}
+
+float TriggerLane::endVelocityForStep (int step) const noexcept
+{
+    if (! isStepOn (step))
+        return 0.0f;
+
+    // A step that fires once has nothing to interpolate towards.
+    if (mode == TriggerMode::euclidean || retriggersForStep (step) <= 1)
+        return velocityForStep (step);
+
+    const auto& gridStep = steps[(size_t) juce::jlimit (0, kMaxLaneSteps - 1, step)];
+    return juce::jlimit (0.0f, 1.0f, gridStep.endVelocity / 127.0f);
+}
+
 //==============================================================================
 AutomationLane::AutomationLane() noexcept
 {
@@ -244,16 +265,22 @@ juce::ValueTree sequencerStateToValueTree (const SequencerState& state)
 
         // A 64-character bit string is compact and reads in a diff, which the XML of a
         // project file often gets eyeballed in.
-        juce::String bits, velocities;
+        juce::String bits, velocities, retrigs, endVelocities;
 
         for (int i = 0; i < kMaxLaneSteps; ++i)
         {
-            bits << (trigger.steps[(size_t) i].on ? '1' : '0');
-            velocities << (i > 0 ? "," : "") << juce::roundToInt (trigger.steps[(size_t) i].velocity);
+            const auto& step = trigger.steps[(size_t) i];
+
+            bits << (step.on ? '1' : '0');
+            velocities << (i > 0 ? "," : "") << juce::roundToInt (step.velocity);
+            retrigs << (i > 0 ? "," : "") << juce::jlimit (1, 4, step.retrig);
+            endVelocities << (i > 0 ? "," : "") << juce::jlimit (1, 127, juce::roundToInt (step.endVelocity));
         }
 
         track.setProperty ("steps", bits, nullptr);
         track.setProperty ("velocities", velocities, nullptr);
+        track.setProperty ("retrigs", retrigs, nullptr);
+        track.setProperty ("endVelocities", endVelocities, nullptr);
 
         for (int slot = 0; slot < kMaxAutomationLanes; ++slot)
         {
@@ -306,8 +333,10 @@ void sequencerStateFromValueTree (const juce::ValueTree& tree, SequencerState& s
                                        (int) track.getProperty ("offset", 0));
 
         const auto bits = track.getProperty ("steps").toString();
-        juce::StringArray storedVelocities;
+        juce::StringArray storedVelocities, storedRetrigs, storedEndVelocities;
         storedVelocities.addTokens (track.getProperty ("velocities").toString(), ",", "");
+        storedRetrigs.addTokens (track.getProperty ("retrigs").toString(), ",", "");
+        storedEndVelocities.addTokens (track.getProperty ("endVelocities").toString(), ",", "");
 
         for (int i = 0; i < kMaxLaneSteps; ++i)
         {
@@ -318,6 +347,17 @@ void sequencerStateFromValueTree (const juce::ValueTree& tree, SequencerState& s
             if (i < storedVelocities.size())
                 trigger.steps[(size_t) i].velocity = juce::jlimit (1.0f, 127.0f,
                     (float) storedVelocities[i].getIntValue());
+
+            // Likewise retriggers: an older session has no list, and decodes as plain steps.
+            if (i < storedRetrigs.size())
+                trigger.steps[(size_t) i].retrig = juce::jlimit (1, 4, storedRetrigs[i].getIntValue());
+
+            // And a session without end velocities gets a flat step rather than a ramp to
+            // whatever the default happened to be.
+            trigger.steps[(size_t) i].endVelocity =
+                i < storedEndVelocities.size()
+                    ? (float) juce::jlimit (1, 127, storedEndVelocities[i].getIntValue())
+                    : trigger.steps[(size_t) i].velocity;
         }
 
         for (int c = 0; c < track.getNumChildren(); ++c)
@@ -407,10 +447,11 @@ void SequencerTransport::advance (const SequencerState& state, double ppqStart,
         if (! playing || ! lane.enabled)
             continue;
 
-        // Start at the first boundary at or after the block start. The epsilon keeps a
-        // boundary landing exactly on the block start from being skipped by rounding.
+        // Start at the step that contains the block start, not the first boundary after it:
+        // a step that began in an earlier block can still have retriggers landing in this
+        // one, and those must not be dropped.
         const double startStep = ppqStart / beatsPerStep;
-        long long index = (long long) std::ceil (startStep - 1.0e-9);
+        long long index = (long long) std::floor (startStep);
 
         for (; ; ++index)
         {
@@ -424,11 +465,33 @@ void SequencerTransport::advance (const SequencerState& state, double ppqStart,
             if (! lane.isStepOn (wrapped))
                 continue;
 
-            const int offset = juce::jlimit (0, numSamples - 1,
-                (int) std::lround ((boundary - ppqStart) / beatsPerSample));
+            const int retriggers = lane.retriggersForStep (wrapped);
+            const float firstVelocity = lane.velocityForStep (wrapped);
+            const float lastVelocity = lane.endVelocityForStep (wrapped);
 
-            out.triggers[(size_t) out.numTriggers] = { offset, t, lane.velocityForStep (wrapped) };
-            ++out.numTriggers;
+            for (int hit = 0; hit < retriggers; ++hit)
+            {
+                const double at = boundary + beatsPerStep * (double) hit / (double) retriggers;
+
+                if (at >= ppqEnd || out.numTriggers >= kMaxTriggerEvents)
+                    break;
+
+                if (at < ppqStart)
+                    continue;
+
+                const int offset = juce::jlimit (0, numSamples - 1,
+                    (int) std::lround ((at - ppqStart) / beatsPerSample));
+
+                // The first hit is the dialled velocity, the last is the end velocity, and
+                // anything between is the ramp between them.
+                const float fraction = retriggers > 1
+                                         ? (float) hit / (float) (retriggers - 1)
+                                         : 0.0f;
+                const float velocity = firstVelocity + (lastVelocity - firstVelocity) * fraction;
+
+                out.triggers[(size_t) out.numTriggers] = { offset, t, velocity };
+                ++out.numTriggers;
+            }
         }
     }
 

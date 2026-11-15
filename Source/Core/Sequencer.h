@@ -89,6 +89,16 @@ struct GridStep
     /** 1..127. 100 is the default, which is what most controllers send and what the
         velocity-modulation curve treats as its neutral point. */
     float velocity = 100.0f;
+
+    /** How many times the step fires inside its own duration. 1 is a plain step; 2..4
+        retrigger it evenly across the step. Meaningless while `on` is false, and always 1
+        on a Euclidean lane, which generates its steps rather than drawing them. */
+    int retrig = 1;
+
+    /** 1..127. Where the retriggered hits should arrive: the first uses `velocity`, the
+        last uses this, and the ones between are interpolated. Ignored while `retrig` is 1,
+        which fires once at `velocity`. */
+    float endVelocity = 100.0f;
 };
 
 //==============================================================================
@@ -127,6 +137,13 @@ struct TriggerLane
     /** How hard this step fires, 0..1. Euclidean steps share one velocity, because they
         are generated rather than drawn. */
     float velocityForStep (int step) const noexcept;
+
+    /** How many triggers this step fires, 1..4. Always 1 off the grid. */
+    int retriggersForStep (int step) const noexcept;
+
+    /** Velocity of the final retriggered hit, 0..1. Equal to velocityForStep on a plain
+        step, so a step that does not retrigger is never ramped. */
+    float endVelocityForStep (int step) const noexcept;
 };
 
 /** Evenly-spread rhythm. This is the closed form that agrees with Bjorklund for the
@@ -177,7 +194,9 @@ struct SequencerState
     A block can hold several steps of the same lane - at x8 that is a 1/128 note, 15.6 ms,
     short enough to fit more than once in a large buffer. 64 covers eight lanes firing eight
     times each, well beyond anything musical. */
-constexpr int kMaxTriggerEvents = 64;
+/** One per retrigger hit, so a block at a slow tempo with several fast lanes can carry
+    more than the step count alone would suggest. */
+constexpr int kMaxTriggerEvents = 256;
 
 /** One trigger, positioned within the block so it can be rendered at the right sample. */
 struct TriggerEvent

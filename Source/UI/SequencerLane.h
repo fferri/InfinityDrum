@@ -59,6 +59,8 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
 
     void refreshFromProcessor();
 
@@ -72,6 +74,24 @@ private:
     void clampEuclidean();
     int stepIndexAt (juce::Point<int>) const noexcept;
     float velocityFromY (int y) const noexcept;
+
+    /** True for a point in the bottom fifth of the grid, where the retrigger strip lives. */
+    bool isInRetrigStrip (int y) const noexcept;
+
+    /** The two halves of a grid cell: the trigger above, its retrigger strip below. */
+    struct CellBounds
+    {
+        juce::Rectangle<float> trig;
+        juce::Rectangle<float> strip;
+    };
+
+    CellBounds boundsForStep (int step) const noexcept;
+
+    /** Which end of the ramp a drag in a third of the trigger cell will move. A step that
+        fires once has nothing to interpolate, so every point is `both`. */
+    enum class VelocityEdit { start, both, end };
+
+    VelocityEdit editZoneFor (int step, float x) const noexcept;
 
     DrumKitProcessor& processor;
     const int trackIndex;
@@ -90,6 +110,10 @@ private:
     /** The step being clicked, so a click can toggle and a vertical drag can set velocity
         without the two fighting each other. */
     int activeStep = -1;
+    int retrigStep = -1;
+    int hoverStep = -1;
+    VelocityEdit hoverEdit = VelocityEdit::both;
+    VelocityEdit velocityEdit = VelocityEdit::both;
     int dragStartY = 0;
     bool dragged = false;
 

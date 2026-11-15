@@ -144,14 +144,23 @@ void randomiseTriggerLane (TriggerLane& lane, Rng& rng)
     }
 
     // Roughly a third of the steps, which reads as a pattern rather than a metronome or a
-    // wall. Every step gets a velocity whether or not it is on, so switching one on later
-    // does not bring back a stale value.
+    // wall. Every step gets a velocity and a retrigger count whether or not it is on, so
+    // switching one on later does not bring back a stale value.
+    //
+    // Retriggers stay rare on purpose: three quarters of the steps are plain, and the rest
+    // fire two to four times. More than that and the roll stops sounding like a rhythm and
+    // starts sounding like a fault.
     for (int i = 0; i < kMaxLaneSteps; ++i)
     {
         auto& step = lane.steps[(size_t) i];
 
         step.on = randomInt (rng, 0, 2) == 0;
         step.velocity = (float) randomInt (rng, 40, 127);
+        step.retrig = rng.nextUnipolar() < 0.75f ? 1 : randomInt (rng, 2, 4);
+
+        // Rolled flat on purpose: a ramp is a deliberate gesture, not something a die
+        // should add behind your back.
+        step.endVelocity = step.velocity;
     }
 
     // Four on the floor is the one thing a roll should not be able to produce by accident,

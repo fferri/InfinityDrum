@@ -338,6 +338,11 @@ Eight `SequencerLane`s, each with its own type, speed and length. Nothing is sha
 what makes polymeters possible — a 5-step grid against a 7-step grid with the same speed
 drifts and realigns on its own.
 
+A `GridStep` carries `on`, `velocity`, `retrig` (1..4) and `endVelocity`. Retrig is
+meaningless while the step is off, and is always 1 on a Euclidean lane, which generates its
+steps rather than drawing them. `endVelocity` is only read when the step retriggers: the hits
+ramp from `velocity` to it.
+
 **Speed is a multiplier of a 1/16 note**, so `stepBeats = 0.25 / multiplier`. Bigger is
 faster. This is the opposite of the intuitive reading of the numbers ("1/8 is smaller than
 1"), and it was got wrong once: the first implementation treated the values as step lengths
@@ -363,6 +368,15 @@ and returns one `LaneAction` per lane. Three rules matter:
 - **A stopped transport holds the lanes.** Nothing fires, and a modulation lane keeps
   reporting its value so an automated parameter does not snap back to its knob position the
   moment the transport stops.
+
+A step can retrigger. `retriggersForStep` returns 1..4, and the transport emits that many
+triggers spaced `stepBeats / retrig` apart, with the velocities interpolated from `velocity`
+to `endVelocity` — the first hit at the dialled velocity, the last at the end velocity.
+`endVelocityForStep` returns the start velocity on a plain step, so a step that fires once is
+never ramped. That changes how the walk starts: at the **step
+containing** the block, not the first boundary after it. A step that began in an earlier block
+can still have retriggers landing in this one, and starting at the next boundary would drop
+them.
 
 Triggers are sample-accurate. The transport does not fire anything itself: it returns a list
 of `TriggerEvent`s, each carrying the sample offset it belongs at, and `processBlock` merges
@@ -398,7 +412,10 @@ way the modulation depths do. `getStateInformation` copies the tree, replaces th
 serialises; `setStateInformation` reads it back after `replaceState`.
 
 Step patterns are stored as a 64-character bit string rather than 64 properties: compact, and
-it reads as a pattern when someone opens a project file in an editor. Breakpoints are encoded
+it reads as a pattern when someone opens a project file in an editor. Velocities, retrigger
+counts and end velocities ride beside it as three comma lists; a session written before any of
+them existed supplies no list and decodes as the defaults, with the end velocity falling back
+to the start so nothing ramps by accident. Breakpoints are encoded
 as `position:value;...` with the count implied.
 
 A session saved before lanes existed has no such node. That decodes as the defaults rather
@@ -529,6 +546,10 @@ Two things it refuses to touch:
 
 Tuning draws from musical intervals rather than freely, so a rolled machine cannot beat
 against the rest of the kit.
+
+Retriggers are rolled per step, like velocity, but deliberately rare: three steps in four stay
+at 1 and the rest get 2..4. Rolled for every step, including off ones, so switching a step on
+later never revives a count from the previous pattern.
 
 ---
 

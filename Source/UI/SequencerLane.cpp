@@ -252,6 +252,62 @@ int SequencerLaneComponent::stepIndexAt (juce::Point<int> position) const noexce
     return juce::jlimit (0, columns - 1, (int) std::floor (relative * (float) columns));
 }
 
+SequencerLaneComponent::CellBounds SequencerLaneComponent::boundsForStep (int step) const noexcept
+{
+    CellBounds bounds;
+
+    if (editorBounds.isEmpty() || step < 0)
+        return bounds;
+
+    const int columns = juce::jmax (1, lane().length);
+    const float cellWidth = (float) editorBounds.getWidth() / (float) columns;
+    const float inset = juce::jmin (2.0f, cellWidth * 0.15f);
+
+    const auto cell = juce::Rectangle<float> ((float) editorBounds.getX() + (float) step * cellWidth,
+                                              (float) editorBounds.getY(), cellWidth,
+                                              (float) editorBounds.getHeight()).reduced (inset);
+
+    auto inner = cell.reduced (1.0f);
+    bounds.strip = inner.removeFromBottom (inner.getHeight() * 0.20f);
+    bounds.trig = inner.withTrimmedBottom (1.5f);
+
+    return bounds;
+}
+
+SequencerLaneComponent::VelocityEdit SequencerLaneComponent::editZoneFor (int step, float x) const noexcept
+{
+    if (! juce::isPositiveAndBelow (step, kMaxLaneSteps))
+        return VelocityEdit::both;
+
+    // One trigger per step: there is no end to move on its own.
+    if (lane().steps[(size_t) step].retrig <= 1)
+        return VelocityEdit::both;
+
+    const auto trig = boundsForStep (step).trig;
+
+    if (trig.getWidth() <= 0.0f)
+        return VelocityEdit::both;
+
+    const float fraction = (x - trig.getX()) / trig.getWidth();
+
+    if (fraction < 1.0f / 3.0f)
+        return VelocityEdit::start;
+
+    if (fraction < 2.0f / 3.0f)
+        return VelocityEdit::both;
+
+    return VelocityEdit::end;
+}
+
+bool SequencerLaneComponent::isInRetrigStrip (int y) const noexcept
+{
+    if (editorBounds.isEmpty())
+        return false;
+
+    return (float) y >= (float) editorBounds.getBottom()
+                          - (float) editorBounds.getHeight() * 0.20f;
+}
+
 float SequencerLaneComponent::velocityFromY (int y) const noexcept
 {
     if (editorBounds.isEmpty())
@@ -275,8 +331,27 @@ void SequencerLaneComponent::mouseDown (const juce::MouseEvent& event)
     if (! juce::isPositiveAndBelow (step, current.length))
         return;
 
+    // The retrigger strip is its own target: a click cycles the count, a right-click puts it
+    // back to 1, and a drag there is ignored so a slipped click cannot wipe a velocity.
+    if (isInRetrigStrip (event.getPosition().y))
+    {
+        if (event.mods.isPopupMenu())
+        {
+            current.steps[(size_t) step].retrig = 1;
+            repaint (editorBounds);
+            return;
+        }
+
+        retrigStep = step;
+        dragStartY = event.y;
+        dragged = false;
+        return;
+    }
+
     // A click toggles; a vertical drag sets velocity. Which one it was is only known on
     // release, so nothing is committed yet.
+    velocityEdit = editZoneFor (step, (float) event.x);
+
     activeStep = step;
     dragStartY = event.y;
     dragged = false;
@@ -285,6 +360,13 @@ void SequencerLaneComponent::mouseDown (const juce::MouseEvent& event)
 void SequencerLaneComponent::mouseDrag (const juce::MouseEvent& event)
 {
     auto& current = lane();
+
+    if (retrigStep >= 0)
+    {
+        // Still a click unless the pointer really moved.
+        dragged = dragged || std::abs (event.y - dragStartY) >= 3;
+        return;
+    }
 
     if (activeStep < 0 || activeStep >= current.length || current.mode != TriggerMode::grid)
         return;
@@ -296,15 +378,95 @@ void SequencerLaneComponent::mouseDrag (const juce::MouseEvent& event)
 
     // Dragging a step up or down turns it on: drawing a velocity into an empty step is how
     // you program a pattern, and an off step has no velocity worth setting.
-    current.steps[(size_t) activeStep].on = true;
-    current.steps[(size_t) activeStep].velocity = velocityFromY (event.y);
+    auto& step = current.steps[(size_t) activeStep];
+    step.on = true;
+
+    const float velocity = velocityFromY (event.y);
+
+    switch (velocityEdit)
+    {
+        case VelocityEdit::start:
+            step.velocity = velocity;
+            break;
+
+        case VelocityEdit::end:
+            step.endVelocity = velocity;
+            break;
+
+        case VelocityEdit::both:
+            // The middle third moves the whole ramp: both ends take the same velocity.
+            step.velocity = velocity;
+            step.endVelocity = velocity;
+            break;
+    }
 
     repaint (editorBounds);
+}
+
+void SequencerLaneComponent::mouseMove (const juce::MouseEvent& event)
+{
+    const auto& current = lane();
+
+    int step = -1;
+    VelocityEdit edit = VelocityEdit::both;
+
+    if (current.mode == TriggerMode::grid && editorBounds.contains (event.getPosition()))
+    {
+        const int candidate = stepIndexAt (event.getPosition());
+
+        if (juce::isPositiveAndBelow (candidate, current.length)
+             && current.steps[(size_t) candidate].retrig > 1)
+        {
+            const auto cellBounds = boundsForStep (candidate);
+            const auto position = event.getPosition().toFloat();
+
+            if (cellBounds.trig.contains (position))
+            {
+                step = candidate;
+                edit = editZoneFor (candidate, position.x);
+            }
+        }
+    }
+
+    if (step != hoverStep || edit != hoverEdit)
+    {
+        hoverStep = step;
+        hoverEdit = edit;
+        repaint (editorBounds);
+    }
+}
+
+void SequencerLaneComponent::mouseExit (const juce::MouseEvent& event)
+{
+    if (hoverStep >= 0)
+    {
+        hoverStep = -1;
+        hoverEdit = VelocityEdit::both;
+        repaint (editorBounds);
+    }
+
+    juce::Component::mouseExit (event);
 }
 
 void SequencerLaneComponent::mouseUp (const juce::MouseEvent&)
 {
     auto& current = lane();
+
+    if (retrigStep >= 0)
+    {
+        if (! dragged && juce::isPositiveAndBelow (retrigStep, kMaxLaneSteps))
+        {
+            auto& step = current.steps[(size_t) retrigStep];
+
+            // 1 -> 2 -> 3 -> 4 -> 1
+            step.retrig = step.retrig >= 4 ? 1 : juce::jmax (2, step.retrig + 1);
+            repaint (editorBounds);
+        }
+
+        retrigStep = -1;
+        dragged = false;
+        return;
+    }
 
     if (activeStep >= 0 && activeStep < current.length && ! dragged
          && current.mode == TriggerMode::grid)
@@ -372,24 +534,104 @@ void SequencerLaneComponent::paint (juce::Graphics& g)
         const auto& gridStep = current.steps[(size_t) step];
         const bool on = running && gridStep.on;
 
-        // Velocity as a bar growing upwards from the bottom, so a glance down the row is a
-        // picture of the dynamics.
+        // The bottom fifth belongs to the retrigger, so the trigger itself is the top 80%.
+        const auto cellBounds = boundsForStep (step);
+        const auto trig = cellBounds.trig;
+        const auto strip = cellBounds.strip;
+
+        // Velocity as a shape growing upwards from the bottom. A retriggered step ramps
+        // from its velocity to its end velocity, so the shape is a trapezoid: the two
+        // bottom corners and the two velocity points.
+        const float startAmount = juce::jlimit (0.0f, 1.0f, gridStep.velocity / 127.0f);
+        const float endAmount = gridStep.retrig > 1
+                                  ? juce::jlimit (0.0f, 1.0f, gridStep.endVelocity / 127.0f)
+                                  : startAmount;
+
+        const float startHeight = juce::jmax (1.5f, trig.getHeight() * startAmount);
+        const float endHeight = juce::jmax (1.5f, trig.getHeight() * endAmount);
+
         if (on)
         {
-            const float amount = juce::jlimit (0.0f, 1.0f, gridStep.velocity / 127.0f);
-            const float barHeight = juce::jmax (1.5f, (cell.getHeight() - 2.0f) * amount);
-
-            auto bar = cell.reduced (1.0f);
-            bar = bar.withTrimmedTop (bar.getHeight() - barHeight);
+            juce::Path shape;
+            shape.startNewSubPath (trig.getBottomLeft());
+            shape.lineTo (trig.getX(), trig.getBottom() - startHeight);
+            shape.lineTo (trig.getRight(), trig.getBottom() - endHeight);
+            shape.lineTo (trig.getBottomRight());
+            shape.closeSubPath();
 
             g.setColour (theme::accent.withAlpha (0.9f));
-            g.fillRect (bar);
+            g.fillPath (shape);
         }
 
         // A separate outline, so "this step fires" is legible even when its velocity is low
         // and the bar is only a sliver.
         g.setColour (on ? theme::accent : theme::outline);
-        g.drawRoundedRectangle (cell.reduced (0.5f), 2.0f, on ? 1.6f : 1.0f);
+        g.drawRoundedRectangle (trig, 2.0f, on ? 1.6f : 1.0f);
+
+        // ---- retrigger strip ---------------------------------------------------------
+        // N cells for retrig N, tiling the strip with one constant unit of gap. The cells
+        // shrink as N rises, which is the picture of the step being divided.
+        if (! on)
+        {
+            g.setColour (theme::outline.brighter (0.30f));
+            g.drawRoundedRectangle (strip.reduced (0.5f), 1.5f, 1.0f);
+        }
+        else
+        {
+            const int retrig = juce::jlimit (1, 4, gridStep.retrig);
+            const float gap = strip.getWidth() / 11.0f;
+            const float hitWidth = (strip.getWidth() - gap * (float) (retrig - 1)) / (float) retrig;
+
+            for (int r = 0; r < retrig; ++r)
+            {
+                const auto sub = juce::Rectangle<float> (
+                                     strip.getX() + (float) r * (hitWidth + (retrig > 1 ? gap : 0.0f)),
+                                     strip.getY(), hitWidth, strip.getHeight()).reduced (0.5f);
+
+                g.setColour (theme::accent.withAlpha (0.9f));
+                g.fillRoundedRectangle (sub, 1.5f);
+            }
+        }
+
+        // ---- which end a drag would edit ---------------------------------------------
+        // The right third edits only the final velocity; the rest moves both. Show the
+        // split and the handle(s) under the pointer so the choice is never a guess.
+        if (on && step == hoverStep && gridStep.retrig > 1)
+        {
+            const float third = trig.getWidth() / 3.0f;
+            const float leftSplit = trig.getX() + third;
+            const float rightSplit = trig.getX() + third * 2.0f;
+
+            auto zone = trig;
+
+            if (hoverEdit == VelocityEdit::start)
+                zone = trig.withWidth (third);
+            else if (hoverEdit == VelocityEdit::end)
+                zone = trig.withTrimmedLeft (third * 2.0f);
+
+            g.setColour (juce::Colours::white.withAlpha (0.10f));
+            g.fillRect (zone);
+
+            g.setColour (juce::Colours::white.withAlpha (0.22f));
+            g.drawLine (leftSplit, trig.getY(), leftSplit, trig.getBottom(), 1.0f);
+            g.drawLine (rightSplit, trig.getY(), rightSplit, trig.getBottom(), 1.0f);
+
+            const auto handle = [&] (float x, float height)
+            {
+                const juce::Point<float> at { x, trig.getBottom() - height };
+
+                g.setColour (juce::Colours::black.withAlpha (0.55f));
+                g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (at));
+                g.setColour (theme::accent.brighter (0.5f));
+                g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre (at));
+            };
+
+            if (hoverEdit != VelocityEdit::end)
+                handle (trig.getX(), startHeight);
+
+            if (hoverEdit != VelocityEdit::start)
+                handle (trig.getRight(), endHeight);
+        }
     }
 
     // ---- Playhead ------------------------------------------------------------

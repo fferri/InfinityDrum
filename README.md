@@ -339,6 +339,23 @@ same bar.
 Speed always means speed — the lane is switched off by its own checkbox, so the control never
 does double duty.
 
+Each step also has a **retrigger** count. The bottom fifth of the cell is a second control:
+click it to cycle 1 → 2 → 3 → 4, and the step fires that many times across its own
+duration, evenly spaced. The strip shows the division directly — N cells for N hits, so a
+retriggered step is a picture of its own time. Right-click the strip to put it back to 1.
+Retriggers are grid-only: Euclidean lanes generate their steps and always fire once.
+
+The dice roll retriggers too, but sparingly: three steps in four stay plain, and the rest fire
+two to four times.
+
+A retriggered step can also **ramp**. Its trigger cell is divided into thirds: drag the left
+third to set only the velocity the first hit arrives at, the middle third to move both ends
+together, or the right third to set only the velocity the last hit arrives at. The filled shape
+becomes a trapezoid from the start velocity to the end velocity, and hovering draws both
+dividers, tints the third a drag would move, and puts a handle on the end (or ends) that will
+follow the pointer. A step that fires once has nothing to interpolate, so its whole cell means
+"both" and no dividers appear.
+
 Each lane draws a **playhead**: a line that walks across the steps as the cycle runs, so you
 can see at a glance where every lane is, and how lanes of different lengths drift against
 each other.
