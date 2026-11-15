@@ -143,3 +143,25 @@ target_link_libraries(InfinityDrumHostTest PRIVATE
     juce::juce_gui_basics
     juce::juce_recommended_config_flags)
 add_dependencies(InfinityDrumHostTest InfinityDrum)
+
+#===============================================================================
+# Installing
+#===============================================================================
+# `cmake --install build --prefix "$HOME"` puts the bundles exactly where hosts
+# look for them, without needing root; any other prefix installs system-wide.
+# Components install one format at a time:
+#   cmake --install build --prefix "$HOME" --component vst3
+#
+# macOS only: on Windows the VST3 is a directory that the CI package copies, and
+# a system-wide install would need administrator rights.
+# The plugin targets are module libraries that JUCE wraps in a bundle directory
+# after linking, so install the bundle rather than the target.
+if(APPLE)
+    install(DIRECTORY "$<TARGET_BUNDLE_DIR:InfinityDrum_VST3>"
+            DESTINATION "Library/Audio/Plug-Ins/VST3"
+            COMPONENT vst3)
+
+    install(DIRECTORY "$<TARGET_BUNDLE_DIR:InfinityDrum_AU>"
+            DESTINATION "Library/Audio/Plug-Ins/Components"
+            COMPONENT au)
+endif()
