@@ -22,11 +22,12 @@ env:
 jobs:
   #=============================================================================
   # macOS: a universal binary, so the same download runs on Intel and Apple
-  # Silicon. macos-14 runners are arm64 and carry both SDK slices.
+  # Silicon. macos-15 runners are arm64 and carry both SDK slices; macos-14 was
+  # retired on 2026-11-02, and a job aimed at it is cancelled before it starts.
   #=============================================================================
   macos:
     name: macOS (universal)
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - uses: actions/checkout@v4
