@@ -47,6 +47,34 @@ void DrumKitProcessor::setNoteMap (NoteMap map)
     saveNoteMapSetting (map);
 }
 
+void DrumKitProcessor::capturePattern (int index)
+{
+    if (! juce::isPositiveAndBelow (index, kNumPatterns))
+        return;
+
+    patterns[(size_t) index].state = sequencer;
+    patterns[(size_t) index].used = true;
+    uiGeneration.fetch_add (1, std::memory_order_relaxed);
+}
+
+void DrumKitProcessor::loadPattern (int index)
+{
+    if (! juce::isPositiveAndBelow (index, kNumPatterns) || ! patterns[(size_t) index].used)
+        return;
+
+    sequencer = patterns[(size_t) index].state;
+    uiGeneration.fetch_add (1, std::memory_order_relaxed);
+}
+
+void DrumKitProcessor::clearPattern (int index)
+{
+    if (! juce::isPositiveAndBelow (index, kNumPatterns))
+        return;
+
+    patterns[(size_t) index] = Pattern {};
+    uiGeneration.fetch_add (1, std::memory_order_relaxed);
+}
+
 void DrumKitProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     // A host calls setRateAndBufferSizeDetails before this, but the offline tools and tests
@@ -66,6 +94,11 @@ void DrumKitProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     // The tracks were reset to model 0; restore whatever the parameters say.
     applyModelSelection();
+
+    // A host calls prepareToPlay repeatedly. The chain is stateful, so it starts again on
+    // the first block after this rather than carrying a position across a reset.
+    wasChainEnabled = false;
+    chainNeedsReset.store (false, std::memory_order_relaxed);
 
     reverb.setSampleRate (sampleRate);
 }
@@ -147,8 +180,41 @@ void DrumKitProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
         const double beatsPerSample = bpm / (60.0 * juce::jmax (1.0, getSampleRate()));
 
+        // The chain selects which pattern the transport renders and where in that pattern
+        // to start. The transport stays stateless; only the chain remembers anything.
+        const SequencerState* source = &sequencer;
+        double transportPpq = ppq;
+
+        if (markovChain.enabled)
+        {
+            const bool resetRequested = chainNeedsReset.exchange (false, std::memory_order_relaxed);
+
+            if (! wasChainEnabled || resetRequested)
+                chainPlayer.reset (markovChain, ppq);
+
+            chainPlayer.advance (markovChain, patterns, sequencer, ppq, beatsPerSample,
+                                 numSamples, playing);
+
+            if (const auto* active = chainPlayer.activePattern())
+                source = active;
+
+            transportPpq = chainPlayer.virtualPpq();
+
+            const int activeState = juce::jlimit (0, kNumChainStates - 1, chainPlayer.activeState());
+            chainActiveState.store (activeState, std::memory_order_relaxed);
+            chainActivePattern.store (markovChain.states[(size_t) activeState].pattern,
+                                      std::memory_order_relaxed);
+        }
+        else
+        {
+            chainActiveState.store (-1, std::memory_order_relaxed);
+            chainActivePattern.store (-1, std::memory_order_relaxed);
+        }
+
+        wasChainEnabled = markovChain.enabled;
+
         SequencerOutput output;
-        transport.advance (sequencer, ppq, beatsPerSample, numSamples, playing, output);
+        transport.advance (*source, transportPpq, beatsPerSample, numSamples, playing, output);
 
         for (auto& trackOffsets : sequenceOffsets)
             trackOffsets.fill (0.0f);
@@ -472,13 +538,17 @@ juce::AudioProcessorEditor* DrumKitProcessor::createEditor()
 
 void DrumKitProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // The lanes are not parameters, so they ride alongside them in the same tree.
+    // The lanes, patterns and chain are not parameters, so they ride alongside them in the
+    // same tree.
     auto state = apvts.copyState();
 
-    if (const auto existing = state.getChildWithName (juce::Identifier ("SEQUENCER")); existing.isValid())
-        state.removeChild (existing, nullptr);
+    for (const auto* name : { "SEQUENCER", "PATTERNS", "CHAIN" })
+        if (const auto existing = state.getChildWithName (juce::Identifier (name)); existing.isValid())
+            state.removeChild (existing, nullptr);
 
     state.appendChild (sequencerStateToValueTree (sequencer), nullptr);
+    state.appendChild (patternsToValueTree (patterns), nullptr);
+    state.appendChild (markovChainToValueTree (markovChain), nullptr);
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -498,6 +568,16 @@ void DrumKitProcessor::setStateInformation (const void* data, int sizeInBytes)
             // The lanes too, and a session saved before they existed decodes as defaults.
             sequencerStateFromValueTree (apvts.state.getChildWithName (juce::Identifier ("SEQUENCER")),
                                          sequencer);
+
+            patternsFromValueTree (apvts.state.getChildWithName (juce::Identifier ("PATTERNS")),
+                                   patterns);
+            markovChainFromValueTree (apvts.state.getChildWithName (juce::Identifier ("CHAIN")),
+                                      markovChain);
+
+            // The chain is audio-thread state; ask the next block to restart it at the
+            // position the restored session left the transport at.
+            chainNeedsReset.store (true, std::memory_order_relaxed);
+            uiGeneration.fetch_add (1, std::memory_order_relaxed);
         }
     }
 }

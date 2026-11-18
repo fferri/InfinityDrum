@@ -13,6 +13,7 @@ namespace
             case EditorUiState::Mode::mod:   return "MOD";
             case EditorUiState::Mode::seq:   return "SEQ";
             case EditorUiState::Mode::automation: return "AUTO";
+            case EditorUiState::Mode::chain: return "CHAIN";
             case EditorUiState::Mode::fx:    return "FX";
         }
 
@@ -72,6 +73,11 @@ DrumKitEditor::DrumKitEditor (DrumKitProcessor& owner)
         automationLanes[(size_t) t] = std::make_unique<AutomationLaneComponent> (kit(), t);
         addAndMakeVisible (*automationLanes[(size_t) t]);
     }
+
+    // ---- Chain page ----------------------------------------------------------
+    chainPage = std::make_unique<ChainEditorComponent> (kit());
+    chainPage->onEditRequested = [this] { setMode (EditorUiState::Mode::seq); };
+    addAndMakeVisible (*chainPage);
 
     // ---- Global knobs --------------------------------------------------------
     // The reverb lives on its own page. The master level has no knob at all: it stays an
@@ -145,6 +151,9 @@ void DrumKitEditor::setMode (EditorUiState::Mode mode)
     for (auto& lane : automationLanes)
         lane->refreshFromProcessor();
 
+    if (chainPage != nullptr)
+        chainPage->refreshFromProcessor();
+
     resized();
     repaint();
 }
@@ -166,6 +175,9 @@ void DrumKitEditor::updateContentVisibility()
 
     for (auto& lane : automationLanes)
         lane->setVisible (mode == EditorUiState::Mode::automation);
+
+    if (chainPage != nullptr)
+        chainPage->setVisible (mode == EditorUiState::Mode::chain);
 }
 
 //==============================================================================
@@ -203,6 +215,7 @@ void DrumKitEditor::resized()
     trackArea = area.reduced (10, 8);
     seqArea = trackArea;
     automationArea = trackArea;
+    chainArea = trackArea;
     fxArea = trackArea;
 
     {
@@ -233,6 +246,9 @@ void DrumKitEditor::resized()
                                                 automationArea.getWidth(),
                                                 rowHeight);
     }
+
+    if (chainPage != nullptr)
+        chainPage->setBounds (chainArea);
 }
 
 void DrumKitEditor::paint (juce::Graphics& g)
@@ -254,6 +270,13 @@ void DrumKitEditor::paint (juce::Graphics& g)
         g.setColour (theme::velocityHard);
         g.setFont (theme::font (11.0f, juce::Font::bold));
         g.drawText ("Velocity modulation  -  drag any knob to set its depth",
+                    hintArea, juce::Justification::centredRight, false);
+    }
+    else if (! hintArea.isEmpty() && uiState.mode.load() == EditorUiState::Mode::chain)
+    {
+        g.setColour (theme::accent);
+        g.setFont (theme::font (11.0f, juce::Font::bold));
+        g.drawText ("Markov chain  -  each row is the state being left",
                     hintArea, juce::Justification::centredRight, false);
     }
 
@@ -545,6 +568,9 @@ void DrumKitEditor::refreshFromProcessor()
 
     for (auto& lane : automationLanes)
         lane->refreshFromProcessor();
+
+    if (chainPage != nullptr)
+        chainPage->refreshFromProcessor();
 }
 
 juce::String DrumKitEditor::getTrackNoteLabel (int trackIndex) const

@@ -26,6 +26,9 @@ public:
 
     void resized() override;
     void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
 
     void setValue (int newValue, juce::NotificationType);
     int getValue() const noexcept { return value; }
@@ -41,6 +44,10 @@ private:
     juce::String caption;
     int minimum, maximum, value = 0;
     juce::TextButton minus { "-" }, plus { "+" };
+
+    int dragStartY = 0;
+    int dragStartValue = 0;
+    bool dragging = false;
 };
 
 //==============================================================================
@@ -123,8 +130,8 @@ private:
 //==============================================================================
 /** One track's automation lane: a breakpoint envelope sweeping one parameter.
 
-    A track can carry several of these on top of its trigger sequencer, so the row also has
-    a slot selector.
+    A track can carry one of these per parameter on top of its trigger sequencer; the row
+    selects between them with a tab per parameter.
 */
 class AutomationLaneComponent final : public juce::Component,
                                       private juce::ComboBox::Listener,

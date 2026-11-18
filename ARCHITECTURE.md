@@ -198,7 +198,7 @@ below for what that implies for the factory kits.
 
 ## Parameters
 
-`createParameterLayout()` builds the whole APVTS: eleven parameters per track plus the kit
+`createParameterLayout()` builds the whole APVTS: thirteen parameters per track plus the kit
 selector, note map, master and four reverb controls. `cacheParameterPointers()` caches the
 raw `std::atomic<float>*` for each, so the audio thread never does a string lookup.
 
@@ -334,7 +334,7 @@ UI, and the UI touches only the plain struct.
 
 ### The data model
 
-Eight `SequencerLane`s, each with its own type, speed and length. Nothing is shared, which is
+Eight `TriggerLane`s, each with its own mode, speed and length. Nothing is shared, which is
 what makes polymeters possible — a 5-step grid against a 7-step grid with the same speed
 drifts and realigns on its own.
 
@@ -358,25 +358,43 @@ gives `x..x..x.`.
 ### The transport
 
 `SequencerTransport::advance()` is called once per block with the host's quarter-note position
-and returns one `LaneAction` per lane. Three rules matter:
+(`ppq`), the tempo as beats per sample, the block length and the playing flag. It has no
+state: every lane's step, pattern index and playhead phase is derived from `ppq` alone. That
+is why `reset()` is empty and why a seek needs no special handling.
 
-- **The first block never fires.** It adopts the current step index instead, so pressing play
-  mid-bar does not dump a step into the buffer.
-- **A jump of more than four steps between blocks is a seek.** It re-adopts the position
-  rather than firing everything it passed over. Four is far beyond what any block can advance
-  even at ×8, so it cannot be confused with normal playback.
-- **A stopped transport holds the lanes.** Nothing fires, and a modulation lane keeps
-  reporting its value so an automated parameter does not snap back to its knob position the
-  moment the transport stops.
+For a lane with step length `s = 0.25 / multiplier` beats and `length` steps, the absolute step
+index is `floor(ppq / s)`, the pattern index is that modulo `length`, and the phase the editor
+draws is `frac((ppq / s) / length)`.
+
+- **A step already in progress does not re-fire.** Starting or seeking into the middle of a
+  step skips that step's boundary, because it lies before the block; only its retrigger hits
+  at or after the play position can fire. A step sitting exactly on the transport position
+  does fire, because its boundary is not before `ppq`.
+- **A jump is a seek, with no threshold.** Only boundaries inside the current block are
+  enumerated, so a seek forward never fires the steps it passed over, and a seek backwards
+  needs no rewind.
+- **A stopped transport fires nothing.** Phases and modulation values are still reported from
+  the frozen `ppq`, so an automated parameter does not snap back to its knob position when the
+  transport stops.
+
+All lanes are functions of the same `ppq`, so the whole set is periodic. Its period is the
+least common multiple of the lane cycles `length / (4 * multiplier)` beats. That is always
+finite — every cycle is a rational multiple of a beat, and in the intended model they all
+resolve to 1/96 beat — but with unequal lengths it can be enormous: an eight-lane combination
+with long coprime lengths can run for millions of years at 120 BPM, and enabling automation
+lanes extends it further. Because `ppq` is absolute, a short host loop replays the same window
+of that period; the combination only advances when the timeline does. (Strictly, ×3 and ×6 are
+stored as `float` approximations of 1/48 and 1/96 beat, so over very long spans they drift from
+the exact grid by about 0.05 ms per hour — irrelevant for a song, but worth knowing before
+computing the period elsewhere.)
 
 A step can retrigger. `retriggersForStep` returns 1..4, and the transport emits that many
 triggers spaced `stepBeats / retrig` apart, with the velocities interpolated from `velocity`
 to `endVelocity` — the first hit at the dialled velocity, the last at the end velocity.
 `endVelocityForStep` returns the start velocity on a plain step, so a step that fires once is
-never ramped. That changes how the walk starts: at the **step
-containing** the block, not the first boundary after it. A step that began in an earlier block
-can still have retriggers landing in this one, and starting at the next boundary would drop
-them.
+never ramped. That changes where enumeration starts: at the **step containing** the block, not
+the first boundary after it. A step that began in an earlier block can still have retriggers
+landing in this one, and starting at the next boundary would drop them.
 
 Triggers are sample-accurate. The transport does not fire anything itself: it returns a list
 of `TriggerEvent`s, each carrying the sample offset it belongs at, and `processBlock` merges
@@ -443,6 +461,111 @@ that ships a sequencer that does nothing.
 A test that checks "the stopped transport fires nothing" initially failed because it was
 measuring the previous hit still ringing. It now renders past the decay first.
 
+## The Markov chain
+
+`Source/Core/MarkovChain.*` holds the model, the chain player and their serialisation;
+`Source/UI/ChainEditor.*` is the CHAIN page. The model is deliberately separate from the
+transport: the transport stays stateless, and the chain is the one piece of sequencer state
+that has a memory.
+
+### Patterns and states
+
+The pattern bank is sixteen `Pattern` slots. A slot is a snapshot of the same `SequencerState`
+the SEQ/AUTO pages edit, plus a `used` flag. `capturePattern` copies the live state into a
+slot; `loadPattern` copies a used slot back. An unused slot is not an error: the chain player
+falls back to the live state, which is what lets the chain be tried before anything is
+captured, and what a state pointing at an empty slot actually plays.
+
+A `ChainState` is:
+
+- `pattern` — which slot to play;
+- `offsetSteps` — where in the pattern to enter, in 1/16 notes;
+- `loopSteps` — how many 1/16 notes the state lasts before the next state is drawn.
+
+The offset and loop are in 1/16 notes (`kChainStepBeats = 0.25` beats) because that is the
+unit the editor is specified in. They are independent of the pattern's lane speeds and
+lengths; the state cuts the pattern wherever its loop expires.
+
+### The matrix
+
+`MarkovChain` holds a 16×16 row-stochastic matrix. The default is sequential: state *i* goes
+to *i+1*, and the last goes to the first. `setTransition` is the only editor writer. It keeps
+the edited cell at the value it was given and keeps the row summing to one:
+
+- if the rest of the row has mass, it is scaled to share the remainder;
+- if it has none, the remainder goes to the self-transition when editing an outgoing edge, or
+  to the next state when editing the self-transition.
+
+That rule is why the matrix can be edited one knob at a time without a separate "normalise"
+pass, and why a row with no mass cannot be left behind. `normaliseAll` repairs malformed rows
+on load and puts the rounding residual on the largest cell.
+
+`nextState` draws once from the row with the `Rng` class the engines use. The chain is the only
+randomised pattern choice in the sequencer; the lanes and the transport are deterministic
+functions of the host clock.
+
+### The chain player
+
+`ChainPlayer` is audio-thread state and is deliberately stateful, the opposite of
+`SequencerTransport`. Each block it:
+
+1. resets to state zero if the host position jumped (first block, seek or loop);
+2. while the current state's loop has expired, advances the state schedule by the exact loop
+   length and draws the next state;
+3. passes the active pattern and a virtual ppq to the transport.
+
+The virtual ppq is `ppq - phaseOrigin + offsetBeats`. `phaseOrigin` is the block at which the
+current state was entered, not the exact loop boundary, so a state entered a few milliseconds
+after its boundary still starts at its offset instead of skipping the first step. The state
+*schedule* still advances on the exact boundary, so the lateness cannot accumulate.
+
+The seek rule is a deliberate simplification: the chain is not a function of the song
+position. A seek or a host loop restarts at state zero, which makes a loop repeat the same
+sequence instead of continuing a private walk. A future "free-run" mode would be the other
+choice, not a different implementation of this one.
+
+Transitions are applied at block boundaries. The transport is stateless and could be called
+twice for a mid-block split, but the render loop currently expects one `SequencerOutput` per
+block; splitting it would mean merging two trigger lists and two automation offsets. The
+current cost is at most one block of latency on a state change, which is acceptable for a
+pattern change and is honest about where the boundary is.
+
+### Persistence
+
+`PATTERNS` stores only used slots. The pattern's state reuses
+`sequencerStateToValueTree`/`sequencerStateFromValueTree`, so a pattern has exactly the format
+of a session's lanes. `CHAIN` stores `enabled`, sixteen `STATE` nodes and sixteen `ROW` nodes
+with the probabilities as a comma list. A session with neither node decodes as an empty bank
+and the default chain, which is what a session saved before the page existed should do.
+
+`getStateInformation` removes and re-appends both nodes next to `SEQUENCER`, so an older
+session's tree still loads. `setStateInformation` raises `chainNeedsReset`, because the chain
+player is audio-thread state; the next block restarts it at the position the restored session
+left the transport at.
+
+### Threading
+
+The pattern bank and the matrix are plain structs written on the message thread and read on
+the audio thread without a lock. That is the same rule as `SequencerState`: a race can let one
+block hear a half-applied pattern, never crash. A captured pattern is a copy, so a slot only
+becomes visible to the audio thread once the copy has finished, even if that block sees an
+older slot. The editor's `uiGeneration` counter tells the page when a capture, load or session
+load changed what it is showing.
+
+### Testing
+
+`testMarkovChainCore` covers the default matrix, the row-sum invariant, the edit rule, the
+sampler and the repair of a zero row. `testMarkovChainPlayback` drives `ChainPlayer` directly
+with exact one-beat blocks, including offsets and a seek. `testMarkovChainAudio` renders the
+processor and checks that the pattern the chain selects is what fires, not the live state.
+`testMarkovChainPersistence` saves and restores two patterns, an unused slot and a matrix.
+`testFreshSequencerSilence` renders a fresh instance under a running transport and asserts it
+stays digitally silent, both with the chain off and with the chain armed over an empty bank;
+that is the regression check for "the plugin must not have a hidden demo pattern".
+`testEditorNoteLabels` switches to CHAIN and snapshots the page, which is the only automated
+check that the page constructs and paints; the matrix's mouse gestures have no automated
+coverage, as with the lane editors.
+
 ## The UI
 
 ### The knobs paint themselves
@@ -462,15 +585,18 @@ visibly reverse the gradient instead of merely sliding it.
 
 ### Pages, and the main menu
 
-Three page tabs — SYNTH, MOD, SEQ — switch what the content area shows. The mode lives in
-`EditorUiState` as an atomic, not a parameter: it changes how a drag is interpreted and what
-is drawn, and nothing about it belongs to the sound. `VelocityKnob` and `ModelKnob` read it on
-every paint and mouse event, which is why it sits in the shared state object rather than being
-found by walking up the parent chain.
+Six page tabs — SYNTH, MOD, SEQ, AUTO, CHAIN and FX — switch what the content area shows. The
+mode lives in `EditorUiState` as an atomic, not a parameter: it changes how a drag is
+interpreted and what is drawn, and nothing about it belongs to the sound. `VelocityKnob` and
+`ModelKnob` read it on every paint and mouse event, which is why it sits in the shared state
+object rather than being found by walking up the parent chain.
 
-Only SYNTH and MOD have content today. SEQ is deliberately a labelled placeholder rather than
-an empty panel: the page exists so the shape of the instrument is settled, and saying so is
-more honest than leaving a blank rectangle that looks broken.
+SYNTH and MOD show the eight track rows; SEQ and AUTO show one lane per track; CHAIN shows the
+pattern bank and the transition matrix; FX shows the shared reverb. The lane pages edit the
+`SequencerState` the audio thread reads, and the chain page edits `MarkovChain` and the
+pattern bank, because those pages are the one place where the UI writes audio state directly.
+A page that is not showing still exists and is laid out; it is hidden rather than destroyed,
+so switching pages does not reset what you were editing.
 
 Everything that applies to the whole instrument moved into the main menu — a drawn hamburger
 button at the top right — rather than staying on the tracks:
@@ -673,7 +799,7 @@ Four tools, all of which exit non-zero on failure and run in CI. What each one c
 
 | Tool | Covers |
 |---|---|
-| `InfinityDrumTests` (433 checks) | Everything headless: engines, level bounds, decay to true silence, sample rates, de-clicking, choke group, the velocity curve and its clamping, depth persistence, kit capture/restore, the randomiser's constraints, note maps, XML and filesystem round trips, the full host lifecycle |
+| `InfinityDrumTests` (569 checks) | Everything headless: engines, level bounds, decay to true silence, sample rates, de-clicking, choke group, the velocity curve and its clamping, depth persistence, kit capture/restore, the randomiser's constraints, note maps, XML and filesystem round trips, the full host lifecycle, the Markov chain model, its playback and persistence |
 | `InfinityDrumHostTest` (23 checks) | End-to-end through JUCE's real VST3 hosting code — the same path a DAW takes: bus layout, MIDI, parameter exposure, rendering, editor construction and painting, state save/restore, prepare/release cycles |
 | `InfinityDrumScreenshot` | Editor layout and painting at four window sizes. The only way to check the band and dot actually draw |
 | `InfinityDrumRender` | Writes WAVs for listening. Not an assertion, but the quickest way to hear a regression |
@@ -752,18 +878,18 @@ bug, which is why they are written down rather than left implicit.
 ### UI and build
 
 16. **A lane shown for the first time must be refreshed before it is laid out**, because its
-    type decides which controls are visible. `setMode` does this; without it the sequencer
+    mode decides which controls are visible. `setMode` does this; without it the sequencer
     page showed every lane as "Off" with its editors missing.
 17. **Note captions refresh on the editor's timer, never in a constructor** — the map can change
     while the editor is open. Switching page must not disturb them either: the note follows the
     map, not the page.
-17. **The kit parameter is polled rather than attached**, so restoring a session does not
+18. **The kit parameter is polled rather than attached**, so restoring a session does not
     re-apply the preset over the restored values.
-18. **Anything constructing a processor must call `setSettingsDirectoryOverride` first**, before
+19. **Anything constructing a processor must call `setSettingsDirectoryOverride` first**, before
     construction: the note map's default is read in the constructor.
-19. **The macOS re-sign `POST_BUILD` must stay registered after `juce_add_plugin`**, and its
+20. **The macOS re-sign `POST_BUILD` must stay registered after `juce_add_plugin`**, and its
     `codesign --verify` must not be dropped.
-20. **`sanitiseFileName` strips trailing dots and spaces**, which are legal on macOS but not on
+21. **`sanitiseFileName` strips trailing dots and spaces**, which are legal on macOS but not on
     Windows.
 
 ---

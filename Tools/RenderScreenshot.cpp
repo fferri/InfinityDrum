@@ -103,6 +103,29 @@ int main (int argc, char** argv)
 
     editor->setSize (1360, 860);
 
+    // An optional page argument makes this tool useful for checking the pages that the
+    // default screenshot does not show. `chain` also seeds a few values so the matrix
+    // displays more than the default sequential diagonal.
+    const auto requestedPage = argc > 2 ? juce::String (argv[2]) : juce::String();
+
+    if (requestedPage == "chain")
+    {
+        static_cast<DrumKitEditor*> (editor.get())->setMode (EditorUiState::Mode::chain);
+
+        auto& chain = processor.getMarkovChain();
+        chain.enabled = true;
+        chain.states[0] = { 0, 8, 32 };
+        chain.states[1] = { 0, 0, 16 };
+        chain.setTransition (0, 2, 0.35f);
+        chain.setTransition (0, 5, 0.20f);
+        processor.capturePattern (0);
+
+        // The page is populated after the editor is built, so sync it once explicitly;
+        // the timer would do this on the next tick, but the snapshot should not depend on
+        // whether a tick happened to land before it.
+        static_cast<DrumKitEditor*> (editor.get())->refreshFromProcessor();
+    }
+
     // The SYNTH page is the default view, and the bands draw in every mode.
     // Dial in some velocity modulation so the bands are actually visible, deliberately
     // mixing polarities and targets so both gradient directions appear.
@@ -123,6 +146,8 @@ int main (int argc, char** argv)
     juce::MidiBuffer midi;
     block.clear();
     processor.processBlock (block, midi);
+
+    static_cast<DrumKitEditor*> (editor.get())->refreshFromProcessor();
 
     if (juce::MessageManager::getInstance() != nullptr)
         pumpMessagesFor (220);

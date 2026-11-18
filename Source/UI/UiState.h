@@ -20,6 +20,7 @@ struct EditorUiState
         mod,         ///< editing modulation depths
         seq,         ///< trigger sequencers
         automation,  ///< parameter automation lanes
+        chain,       ///< Markov chain and pattern bank
         fx           ///< the reverb and other shared processing
     };
 
@@ -29,6 +30,7 @@ struct EditorUiState
     bool isSynthMode() const noexcept { return mode.load() == Mode::synth; }
     bool isSequencerMode() const noexcept { return mode.load() == Mode::seq; }
     bool isAutomationMode() const noexcept { return mode.load() == Mode::automation; }
+    bool isChainMode() const noexcept { return mode.load() == Mode::chain; }
     bool isFxMode() const noexcept { return mode.load() == Mode::fx; }
 };
 

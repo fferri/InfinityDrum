@@ -10,7 +10,8 @@ namespace df
 
 //==============================================================================
 ValueStepper::ValueStepper (juce::String captionText, int minValue, int maxValue)
-    : caption (std::move (captionText)), minimum (minValue), maximum (maxValue)
+    : caption (std::move (captionText)), minimum (minValue), maximum (maxValue),
+      value (minValue)
 {
     for (auto* button : { &minus, &plus })
     {
@@ -64,10 +65,13 @@ void ValueStepper::paint (juce::Graphics& g)
     g.setColour (theme::panelAlt);
     g.fillRoundedRectangle (area.toFloat(), 3.0f);
 
-    g.setColour (theme::textDim);
-    g.setFont (theme::font (9.0f));
-    g.drawText (caption, area.removeFromLeft (38).reduced (5, 0),
-                juce::Justification::centredLeft, false);
+    if (caption.isNotEmpty())
+    {
+        g.setColour (theme::textDim);
+        g.setFont (theme::font (9.0f));
+        g.drawText (caption, area.removeFromLeft (38).reduced (5, 0),
+                    juce::Justification::centredLeft, false);
+    }
 
     // The two buttons are children drawn on top, so their width has to come out of the area
     // the number is centred in. Otherwise a three-digit count runs underneath them.
@@ -76,6 +80,35 @@ void ValueStepper::paint (juce::Graphics& g)
     g.setColour (theme::text);
     g.setFont (theme::font (11.0f, juce::Font::bold));
     g.drawText (juce::String (value), area, juce::Justification::centred, false);
+}
+
+void ValueStepper::mouseDown (const juce::MouseEvent& event)
+{
+    // The buttons are children and consume their own clicks; a click here is on the number.
+    dragStartY = event.y;
+    dragStartValue = value;
+    dragging = false;
+}
+
+void ValueStepper::mouseDrag (const juce::MouseEvent& event)
+{
+    if (! dragging && std::abs (event.y - dragStartY) < 3)
+        return;
+
+    dragging = true;
+
+    // A 0..1023 offset would take forever one pixel at a time. Large ranges move their
+    // whole span over about 200 pixels; small ones step one unit per pixel.
+    const int range = maximum - minimum;
+    const float unitsPerPixel = range > 64 ? (float) range / 200.0f : 1.0f;
+    const int delta = (int) std::lround ((float) (dragStartY - event.y) * unitsPerPixel);
+
+    setValue (dragStartValue + delta, juce::sendNotificationSync);
+}
+
+void ValueStepper::mouseUp (const juce::MouseEvent&)
+{
+    dragging = false;
 }
 
 //==============================================================================

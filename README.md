@@ -88,8 +88,8 @@ it, so you always know which row you are looking at.
 A bar across the top holds the wordmark, the name of the kit currently loaded, and the menu
 button at the far right.
 
-Under it are four page tabs — **SYNTH**, **MOD**, **SEQ** and **FX** — and then the eight
-tracks, one to a row.
+Under it are six page tabs — **SYNTH**, **MOD**, **SEQ**, **AUTO**, **CHAIN** and **FX** —
+and then the eight tracks, one to a row on the pages that show them.
 
 Each track row, left to right:
 
@@ -118,6 +118,10 @@ page, but with a far larger target. Every row goes hot while you are there, so t
 never ambiguous.
 
 **SEQ** holds one sequencer lane per track — see below.
+
+**AUTO** holds one automation lane per parameter per track — see below.
+
+**CHAIN** is the Markov pattern sequencer — see below.
 
 **FX** holds the shared reverb. It used to sit in the top bar; moving it here is what freed
 the space for the sequencer.
@@ -323,6 +327,13 @@ the switch is there to silence one rather than to wake it up.
 Independent length and speed per track is what produces polymeters: a 5-step lane against a
 7-step lane at the same speed drifts and realigns on its own.
 
+Every lane is positioned from the host's beat clock, not from the moment you pressed play, so
+the combination you hear depends on where the song is. Playing forward lets the lanes drift
+through it; a short loop replays the same window instead, because the host puts the play
+position back to the loop start. The complete set only returns to its starting combination
+after the least common multiple of the lane cycles — often many bars, and with coprime lengths
+and mixed speeds, longer than any song.
+
 | Multiplier | Step length | At 120 BPM |
 |---|---|---|
 | ×1/8 | a 1/2 note | 1000 ms |
@@ -381,7 +392,7 @@ In **Euclidean** mode the row also shows:
 ### The automation page
 
 Rhythm and movement are separate decisions, so they live on separate pages. **AUTO** gives
-each track up to **four automation lanes**, each a breakpoint envelope sweeping one
+each track up to **nine automation lanes**, each a breakpoint envelope sweeping one
 parameter:
 
 - **A tab per parameter** across the top of the lane — `Decay`, `Tone`, `Character`, `Sweep`,
@@ -389,7 +400,7 @@ parameter:
   is outlined; the ones with automation running are filled, so the row shows what is being
   automated without you having to look.
 - **On** — whether the selected lane runs, under the track name. Automation lanes start **off**,
-  because four ramps per track sweeping from the moment you open the plugin is not a
+  because nine ramps per track sweeping from the moment you open the plugin is not a
   sensible default.
 - **Speed** and **Steps** — its own, so each lane loops on its own length, independently of
   the track's trigger sequencer and of every other parameter's lane.
@@ -398,21 +409,51 @@ parameter:
 Each parameter has exactly one lane, which is why the tabs can stand in for a target
 selector: the lane you are editing *is* the parameter.
 
-Click in the envelope to add a breakpoint, drag one to move it. Lanes aimed at the same
-parameter add up, and the result is layered on top of whatever the knob and the velocity
-modulation are already doing.
+Click in the envelope to add a breakpoint, drag one to move it. The result is layered on top
+of whatever the knob and the velocity modulation are already doing.
 
 The automation page works on its own: a track can have no rhythm at all and still have its
 parameters moving.
 
 The sequencer follows the host's transport: it starts when you press play and stops when you
-stop. A lane never fires on the first block after you press play, so starting mid-bar does
-not dump a step into the buffer, and seeking past a run of steps does not fire them all at
-once.
+stop. A lane is positioned from the host's beat position, not from the moment you pressed
+play, so a step already in progress when playback starts is not re-fired; playback picks up
+at the next hit after the play position. Seeking past a run of steps does not fire them all
+at once either: only the hits whose true position falls inside the current buffer are played.
 
-**Everything on these pages is saved with your session.** Patterns and envelopes come back
-exactly as you left them. They are deliberately *not* part of a kit: a kit is a sound, and a
-pattern is an arrangement. Loading someone's kit should not overwrite the groove you wrote.
+### The chain
+
+**CHAIN** turns the sequencer into a Markov chain. A state says which pattern to play, where
+in it to start, and how long to stay; a transition matrix decides which state comes next.
+
+- **Pattern slots** — 1 to 16. **Capture** copies the current SEQ/AUTO pages into the selected
+  slot. **Load** puts a captured slot back on those pages for editing, and switches you
+  there. A state that points at an empty slot plays the live pages instead, so you can try the
+  chain before capturing anything.
+- **State table** — one row per state: the **pattern** it plays, the **offset** into that
+  pattern, and the **loop** length before the chain moves on. Offset and loop are in 1/16
+  notes; the pattern's own speeds and lengths still apply.
+- **Matrix** — one row per state being left, one column per destination. Each micro-knob is
+  the probability of that edge. **Rows sum to 1**: turning one knob up leaves the rest of the
+  row to share what remains, and if nothing else has any weight the remainder goes to a
+  fallback edge — the state itself normally, the next state when you are editing the
+  self-transition. Drag vertically to set a knob; right-click a cell to zero it. **Sequential**
+  restores the default matrix, in which 1 goes to 2, 2 to 3, and the last state goes back to 1.
+- **On** — whether the chain drives the sequencer. With it off, the live SEQ page plays.
+
+The chain moves on when a state's loop ends. Each state starts its pattern at its own offset,
+so one pattern can be entered at different points. The current state is shown at the top right
+and highlighted in the table and the matrix.
+
+The chain is path-dependent, unlike the lanes: a seek, or a loop in the host, restarts it at
+state 1. That keeps a loop repeatable — each pass plays the same sequence instead of walking
+further into the chain — but it also means the chain is not a fixed function of the song
+position the way the playheads are.
+
+**Everything on these pages — patterns, envelopes and the chain — is saved with your
+session.** They come back exactly as you left them. They are deliberately *not* part of a
+kit: a kit is a sound, and a pattern is an arrangement. Loading someone's kit should not
+overwrite the groove you wrote.
 
 ---
 

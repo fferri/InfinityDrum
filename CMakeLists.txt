@@ -21,6 +21,7 @@ add_library(InfinityDrumCore STATIC
     Source/Core/Parameters.cpp
     Source/Core/ModulationState.cpp
     Source/Core/Sequencer.cpp
+    Source/Core/MarkovChain.cpp
     Source/Core/Randomizer.cpp
     Source/Core/KitLibrary.cpp
     Source/Core/Settings.cpp
@@ -31,7 +32,8 @@ add_library(InfinityDrumCore STATIC
     Source/UI/TrackStrip.cpp
     Source/UI/DrumKitEditor.cpp
     Source/UI/TrackHeader.cpp
-    Source/UI/SequencerLane.cpp)
+    Source/UI/SequencerLane.cpp
+    Source/UI/ChainEditor.cpp)
 
 target_include_directories(InfinityDrumCore PUBLIC Source)
 

@@ -19,6 +19,7 @@
 
 #include "Core/DrumKitProcessor.h"
 #include "Core/KitLibrary.h"
+#include "Core/MarkovChain.h"
 #include "Core/Randomizer.h"
 #include "Core/Sequencer.h"
 #include "Core/Settings.h"
@@ -2247,6 +2248,330 @@ void testSequencerPersistence()
     }
 }
 
+void testMarkovChainCore()
+{
+    section ("Markov chain: every row is a distribution");
+
+    MarkovChain chain;
+
+    bool sums = true;
+    bool sequential = true;
+
+    for (int from = 0; from < kNumChainStates; ++from)
+    {
+        sums = sums && std::abs (chain.rowSum (from) - 1.0f) < 1.0e-4f;
+
+        for (int to = 0; to < kNumChainStates; ++to)
+        {
+            const float expected = (to == (from + 1) % kNumChainStates) ? 1.0f : 0.0f;
+            sequential = sequential
+                           && std::abs (chain.transition (from, to) - expected) < 1.0e-6f;
+        }
+    }
+
+    check (sums, "the default rows sum to one");
+    check (sequential, "and each state goes to the next, with the last wrapping to the first");
+
+    chain.setTransition (0, 3, 0.25f);
+
+    check (std::abs (chain.transition (0, 3) - 0.25f) < 1.0e-4f,
+           "a dialled cell keeps the value it was given",
+           juce::String (chain.transition (0, 3)));
+    check (std::abs (chain.rowSum (0) - 1.0f) < 1.0e-4f, "and the row still sums to one");
+    check (std::abs (chain.transition (0, 1) - 0.75f) < 1.0e-4f,
+           "the rest of the row shares the remainder",
+           juce::String (chain.transition (0, 1)));
+
+    chain.setTransition (0, 0, 0.5f);
+
+    check (std::abs (chain.transition (0, 0) - 0.5f) < 1.0e-4f,
+           "the self-transition can be dialled too");
+    check (std::abs (chain.rowSum (0) - 1.0f) < 1.0e-4f,
+           "without breaking the sum");
+
+    // A deterministic row returns its target.
+    MarkovChain dice;
+    dice.setTransition (0, 2, 1.0f);
+
+    Rng rng (0x12345678u);
+    check (dice.nextState (0, rng) == 2, "a row with one edge samples that edge");
+
+    // Start from a single edge and split it: the setter keeps the edited cell and shares
+    // the remainder, so this leaves exactly 2 and 5 at half each.
+    dice.setTransition (0, 5, 0.5f);
+
+    int twos = 0;
+    int fives = 0;
+
+    for (int i = 0; i < 2000; ++i)
+    {
+        const int next = dice.nextState (0, rng);
+        twos += next == 2 ? 1 : 0;
+        fives += next == 5 ? 1 : 0;
+    }
+
+    check (twos > 800 && fives > 800 && twos + fives == 2000,
+           "two equal edges are sampled in proportion",
+           juce::String (twos) + "/" + juce::String (fives));
+
+    // A row with no mass cannot go anywhere.
+    MarkovChain stuck;
+
+    for (int to = 0; to < kNumChainStates; ++to)
+        stuck.transitions[7][(size_t) to] = 0.0f;
+
+    check (stuck.nextState (7, rng) == 7, "a row with no mass stays put");
+
+    // A malformed saved row is repaired on load rather than producing a zero distribution.
+    MarkovChain repaired;
+
+    for (int to = 0; to < kNumChainStates; ++to)
+        repaired.transitions[3][(size_t) to] = 0.0f;
+
+    repaired.normaliseAll();
+
+    check (std::abs (repaired.rowSum (3) - 1.0f) < 1.0e-4f
+             && std::abs (repaired.transition (3, 3) - 1.0f) < 1.0e-4f,
+           "a row with no mass is repaired to a self-transition",
+           juce::String (repaired.transition (3, 3)));
+}
+
+void testMarkovChainPlayback()
+{
+    section ("Markov chain: states advance at their own loop boundary");
+
+    std::array<Pattern, (size_t) kNumPatterns> patterns {};
+    SequencerState fallback;
+
+    patterns[0].used = true;
+    patterns[0].state.triggers[0].steps[0].on = true;
+
+    patterns[1].used = true;
+    patterns[1].state.triggers[1].steps[0].on = true;
+
+    MarkovChain chain;
+
+    for (int from = 0; from < kNumChainStates; ++from)
+        chain.transitions[(size_t) from].fill (0.0f);
+
+    chain.transitions[0][1] = 1.0f;
+    chain.transitions[1][0] = 1.0f;
+
+    chain.states[0] = { 0, 0, 4 };   // pattern 0, offset 0, one beat
+    chain.states[1] = { 1, 4, 4 };   // pattern 1, offset one beat, one beat
+
+    ChainPlayer player;
+
+    // One beat per block at 120 BPM and 48 kHz, so the ppq sequence is exact.
+    constexpr double beatsPerSample = 1.0 / 24000.0;
+    constexpr int block = 24000;
+
+    player.advance (chain, patterns, fallback, 0.0, beatsPerSample, block, true);
+
+    check (player.activeState() == 0, "the chain starts in state 1");
+    check (player.activePattern() == &patterns[0].state, "playing pattern 1");
+    check (std::abs (player.virtualPpq() - 0.0) < 1.0e-9, "at the pattern's offset");
+
+    player.advance (chain, patterns, fallback, 1.0, beatsPerSample, block, true);
+
+    check (player.activeState() == 1, "at one beat it moves to state 2");
+    check (player.activePattern() == &patterns[1].state, "and plays pattern 2");
+    check (std::abs (player.virtualPpq() - 1.0) < 1.0e-9,
+           "whose offset is one beat into the pattern",
+           juce::String (player.virtualPpq()));
+
+    player.advance (chain, patterns, fallback, 2.0, beatsPerSample, block, true);
+
+    check (player.activeState() == 0, "at two beats it is back in state 1");
+    check (std::abs (player.virtualPpq() - 0.0) < 1.0e-9,
+           "at the first state's offset again");
+
+    // A jump backwards is a seek: the chain starts again rather than accumulating history.
+    player.advance (chain, patterns, fallback, 0.5, beatsPerSample, block, true);
+
+    check (player.activeState() == 0, "a seek restarts the chain at state 1");
+    check (std::abs (player.virtualPpq() - 0.0) < 1.0e-9,
+           "with the first state's offset");
+
+    // Stopping does not advance the chain.
+    player.advance (chain, patterns, fallback, 0.5, beatsPerSample, block, false);
+    check (player.activeState() == 0, "a stopped transport leaves the state alone");
+}
+
+void testMarkovChainAudio()
+{
+    section ("Markov chain: the chain chooses what the transport renders");
+
+    setSettingsDirectoryOverride (juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                      .getChildFile ("InfinityDrumChainAudioTests"));
+
+    DrumKitProcessor processor;
+    processor.prepareToPlay (sampleRate, 480);
+
+    // The live state is deliberately audible: if the chain fell back to it instead of the
+    // pattern bank, track 8 would fire and the test would see it.
+    auto& live = processor.getSequencerState();
+    live.triggers[7].length = 4;
+    live.triggers[7].steps[0].on = true;
+
+    auto& first = processor.getPattern (0);
+    first.used = true;
+    first.state.triggers[0].length = 16;   // one hit per four-beat state
+    first.state.triggers[0].steps[0].on = true;
+
+    auto& second = processor.getPattern (1);
+    second.used = true;
+    second.state.triggers[1].length = 16;
+    second.state.triggers[1].steps[0].on = true;
+
+    auto& chain = processor.getMarkovChain();
+    chain.enabled = true;
+
+    for (int from = 0; from < kNumChainStates; ++from)
+        chain.transitions[(size_t) from].fill (0.0f);
+
+    chain.transitions[0][1] = 1.0f;
+    chain.transitions[1][0] = 1.0f;
+
+    chain.states[0] = { 0, 0, 16 };   // one bar
+    chain.states[1] = { 1, 0, 16 };
+
+    TestPlayHead playHead;
+    processor.setPlayHead (&playHead);
+
+    constexpr double beatsPerSample = 1.0 / 24000.0;
+    constexpr int block = 480;
+
+    juce::AudioBuffer<float> buffer (2, block);
+
+    // Four bars: state 1 in bars 1 and 3, state 2 in bars 2 and 4.
+    for (int b = 0; b < 800; ++b)
+    {
+        playHead.ppq = (double) b * block * beatsPerSample;
+        buffer.clear();
+        juce::MidiBuffer midi;
+        processor.processBlock (buffer, midi);
+    }
+
+    check (processor.getTrackTriggerCount (0) == 2,
+           "pattern 1 fires twice",
+           juce::String (processor.getTrackTriggerCount (0)));
+    check (processor.getTrackTriggerCount (1) == 2,
+           "pattern 2 fires twice",
+           juce::String (processor.getTrackTriggerCount (1)));
+    check (processor.getTrackTriggerCount (7) == 0,
+           "and the live state is not what played",
+           juce::String (processor.getTrackTriggerCount (7)));
+    check (processor.getChainActiveState() == 1,
+           "the chain ends in state 2",
+           juce::String (processor.getChainActiveState()));
+
+    processor.setPlayHead (nullptr);
+    processor.releaseResources();
+}
+
+void testFreshSequencerSilence()
+{
+    section ("A fresh instance is silent under the transport");
+
+    DrumKitProcessor processor;
+    processor.prepareToPlay (sampleRate, 480);
+
+    TestPlayHead playHead;
+    playHead.ppq = 0.0;
+    playHead.playing = true;
+    processor.setPlayHead (&playHead);
+
+    juce::AudioBuffer<float> buffer (2, 480);
+    const double beatsPerSample = 120.0 / (60.0 * sampleRate);
+
+    const auto renderBlocks = [&] (int firstBlock, int numBlocks) -> float
+    {
+        float peak = 0.0f;
+
+        for (int b = firstBlock; b < firstBlock + numBlocks; ++b)
+        {
+            playHead.ppq = (double) b * 480.0 * beatsPerSample;
+            buffer.clear();
+            juce::MidiBuffer midi;
+            processor.processBlock (buffer, midi);
+            peak = juce::jmax (peak, buffer.getMagnitude (0, buffer.getNumSamples()));
+        }
+
+        return peak;
+    };
+
+    check (renderBlocks (0, 200) == 0.0f,
+           "an empty sequencer produces no audio under the transport");
+
+    // The chain's fallback to the live state must not turn an empty instance into a
+    // pattern: all sixteen slots are unused here.
+    processor.getMarkovChain().enabled = true;
+
+    check (renderBlocks (200, 200) == 0.0f,
+           "an empty chain bank falls back to the empty live state and stays silent");
+
+    processor.setPlayHead (nullptr);
+    processor.releaseResources();
+}
+
+void testMarkovChainPersistence()
+{
+    section ("Markov chain: patterns and the matrix survive a save and load");
+
+    setSettingsDirectoryOverride (juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                      .getChildFile ("InfinityDrumChainSaveTests"));
+
+    DrumKitProcessor source;
+
+    auto& live = source.getSequencerState();
+    live.triggers[2].length = 5;
+    live.triggers[2].steps[0].on = true;
+    source.capturePattern (0);
+
+    live.triggers[2].steps[0].on = false;
+    live.triggers[3].length = 7;
+    live.triggers[3].steps[1].on = true;
+    source.capturePattern (1);
+
+    auto& chain = source.getMarkovChain();
+    chain.enabled = true;
+    chain.states[0] = { 1, 8, 24 };
+    chain.states[1] = { 0, 0, 4 };
+    chain.setTransition (0, 1, 0.25f);
+
+    juce::MemoryBlock saved;
+    source.getStateInformation (saved);
+
+    DrumKitProcessor restored;
+    restored.setStateInformation (saved.getData(), (int) saved.getSize());
+
+    check (restored.getPattern (0).used && restored.getPattern (1).used,
+           "both captured patterns come back");
+    check (restored.getPattern (0).state.triggers[2].length == 5
+             && restored.getPattern (0).state.triggers[2].steps[0].on,
+           "with the first pattern's steps");
+    check (restored.getPattern (1).state.triggers[3].length == 7
+             && restored.getPattern (1).state.triggers[3].steps[1].on,
+           "and the second pattern's steps");
+    check (! restored.getPattern (2).used, "an unused slot stays unused");
+
+    check (restored.getMarkovChain().enabled, "the chain comes back enabled");
+    check (restored.getMarkovChain().states[0].pattern == 1
+             && restored.getMarkovChain().states[0].offsetSteps == 8
+             && restored.getMarkovChain().states[0].loopSteps == 24,
+           "with the state's pattern, offset and loop",
+           juce::String (restored.getMarkovChain().states[0].pattern) + "/"
+             + juce::String (restored.getMarkovChain().states[0].offsetSteps) + "/"
+             + juce::String (restored.getMarkovChain().states[0].loopSteps));
+    check (std::abs (restored.getMarkovChain().transition (0, 1) - 0.25f) < 1.0e-3f,
+           "and the transition probability",
+           juce::String (restored.getMarkovChain().transition (0, 1)));
+    check (std::abs (restored.getMarkovChain().rowSum (0) - 1.0f) < 1.0e-4f,
+           "with the row normalised");
+    check (restored.getUiGeneration() > 0, "and the editor is told to refresh");
+}
+
 void testKitLoadLeavesControlsFree()
 {
     section ("Kits: loading one must not lock the controls");
@@ -2561,6 +2886,12 @@ void testEditorNoteLabels()
     editor.setMode (EditorUiState::Mode::seq);
     check (editor.getMode() == EditorUiState::Mode::seq, "and to the sequencer page");
 
+    editor.setMode (EditorUiState::Mode::chain);
+    check (editor.getMode() == EditorUiState::Mode::chain, "and to the chain page");
+
+    const auto chainSnapshot = editor.createComponentSnapshot (editor.getLocalBounds(), false, 1.0f);
+    check (chainSnapshot.isValid(), "and the chain page paints");
+
     editor.setMode (EditorUiState::Mode::synth);
     check (editor.getMode() == EditorUiState::Mode::synth, "and back to the synth page");
 
@@ -2607,6 +2938,11 @@ int main()
     testSequencerCore();
     testSequencerAudio();
     testSequencerPersistence();
+    testMarkovChainCore();
+    testMarkovChainPlayback();
+    testMarkovChainAudio();
+    testFreshSequencerSilence();
+    testMarkovChainPersistence();
     testKitLoadLeavesControlsFree();
     testLaneRandomisers();
     testEditorNoteLabels();

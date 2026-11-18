@@ -176,7 +176,7 @@ from source. A missing `-fPIC` on the core library is the trap that stops that b
 ```sh
 cmake --build build
 
-# The main suite: 491 checks. Drives the processor headlessly.
+# The main suite: 569 checks. Drives the processor headlessly.
 ./build/InfinityDrumTests_artefacts/Release/InfinityDrumTests
 
 # End-to-end through the real VST3 hosting code: 23 checks.

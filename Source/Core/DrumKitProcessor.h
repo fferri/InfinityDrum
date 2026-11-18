@@ -5,6 +5,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "DrumTrack.h"
+#include "MarkovChain.h"
 #include "ModulationState.h"
 #include "Sequencer.h"
 #include "Parameters.h"
@@ -90,6 +91,35 @@ public:
     SequencerState& getSequencerState() noexcept { return sequencer; }
     const SequencerState& getSequencerState() const noexcept { return sequencer; }
 
+    /** The pattern bank and the Markov chain that selects from it. */
+    MarkovChain& getMarkovChain() noexcept { return markovChain; }
+    const MarkovChain& getMarkovChain() const noexcept { return markovChain; }
+
+    Pattern& getPattern (int index) noexcept
+    {
+        return patterns[(size_t) juce::jlimit (0, kNumPatterns - 1, index)];
+    }
+
+    const Pattern& getPattern (int index) const noexcept
+    {
+        return patterns[(size_t) juce::jlimit (0, kNumPatterns - 1, index)];
+    }
+
+    /** Copies the live SEQ/AUTO state into a pattern slot, and marks the slot used. */
+    void capturePattern (int index);
+
+    /** Copies a used pattern back into the live state, for editing on the SEQ page. */
+    void loadPattern (int index);
+
+    void clearPattern (int index);
+
+    /** Which state the chain is currently in, or -1 while the chain is off. */
+    int getChainActiveState() const noexcept { return chainActiveState.load(); }
+    int getChainActivePattern() const noexcept { return chainActivePattern.load(); }
+
+    /** Bumped whenever a session or a pattern capture changes the data the editor shows. */
+    uint32_t getUiGeneration() const noexcept { return uiGeneration.load(); }
+
     /** Where a lane's cycle sits, 0..1, for the editor's playhead. */
     float getTriggerPhase (int trackIndex) const noexcept
     {
@@ -161,6 +191,21 @@ private:
         audio thread; every field is a plain scalar, so the worst a race can do is let one
         block hear a half-applied edit, never crash or wedge a voice. */
     SequencerState sequencer;
+
+    /** The pattern bank: snapshots of the live state, plus the chain that selects among
+        them. Like the lanes, the audio thread reads them on the message thread's word; a
+        race can only let one block hear a half-applied pattern. */
+    std::array<Pattern, (size_t) kNumPatterns> patterns {};
+
+    MarkovChain markovChain;
+
+    /** Audio-thread only: the chain's position, and the mirrors the editor reads. */
+    ChainPlayer chainPlayer;
+    std::atomic<int> chainActiveState { -1 };
+    std::atomic<int> chainActivePattern { -1 };
+    std::atomic<uint32_t> uiGeneration { 0 };
+    std::atomic<bool> chainNeedsReset { false };
+    bool wasChainEnabled = false;
 
     /** Audio-thread only: turns transport position into lane actions. */
     SequencerTransport transport;

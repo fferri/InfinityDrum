@@ -7,6 +7,7 @@
 
 #include "../Core/DrumKitProcessor.h"
 #include "../Core/KitLibrary.h"
+#include "ChainEditor.h"
 #include "ModelKnob.h"
 #include "SequencerLane.h"
 #include "Theme.h"
@@ -19,8 +20,8 @@ namespace df
 /** The plugin window.
 
     Three bands: a top bar holding the wordmark, the current kit name, the global knobs and
-    the main menu; a tab bar switching between SYNTH, MOD and SEQ; and the content area,
-    which is eight track rows or, on the sequencer page, its placeholder.
+    the main menu; a tab bar switching between SYNTH, MOD, SEQ, AUTO, CHAIN and FX; and the
+    content area, which is eight track rows, a sequencer page, or the chain page.
 
     Everything app-level lives in the main menu rather than on the tracks: kits (load, save,
     import, export, delete) and the MIDI note map. Right-clicking a track pad used to offer
@@ -77,17 +78,19 @@ private:
 
     KitNameButton kitLabel;
     MenuButton menuButton;
-    std::array<juce::TextButton, 5> tabButtons;
+    std::array<juce::TextButton, 6> tabButtons;
 
     EditorUiState uiState;
 
     std::array<std::unique_ptr<TrackStrip>, (size_t) kNumTracks> strips;
     std::array<std::unique_ptr<SequencerLaneComponent>, (size_t) kNumTracks> lanes;
     std::array<std::unique_ptr<AutomationLaneComponent>, (size_t) kNumTracks> automationLanes;
+    std::unique_ptr<ChainEditorComponent> chainPage;
     std::array<std::unique_ptr<ModelKnob>, 4> reverbKnobs;
 
     juce::Rectangle<int> topBarArea, titleArea, kitLabelArea, menuButtonArea,
-                        tabBarArea, hintArea, trackArea, seqArea, automationArea, fxArea;
+                        tabBarArea, hintArea, trackArea, seqArea, automationArea,
+                        chainArea, fxArea;
 
     /** The kit the editor last loaded, or -1 once the current sound matches no kit. */
     int currentKitIndex = -1;
