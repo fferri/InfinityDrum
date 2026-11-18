@@ -88,7 +88,7 @@ A change is not finished until it has been verified on the machine it runs on.
 |---|---|
 | `kits/` | The kit definitions, as editable `.dfkit` XML. **The source of truth for kit content** |
 | `docs/` | The UI screenshot used in the README, `infinitydrum-ui.png` |
-| `.github/workflows/` | CI: builds both platforms, tests, packages, releases |
+| `.github/workflows/` | CI: builds and tests macOS, Windows and Linux, packages macOS and Windows, releases |
 | `README.md` | For users: installing, using, licensing, supporting |
 | `ARCHITECTURE.md` | For developers: how it works and why it is built this way |
 | `CMakeLists.txt` | The whole build definition |
@@ -164,6 +164,11 @@ For a universal macOS binary add `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`.
 
 The VST3 bundle lands at `build/InfinityDrum_artefacts/Release/VST3/InfinityDrum.vst3`.
 
+Linux builds the same VST3 from the same commands, needing nothing extra on the CMake side —
+the AU is Apple-only and is skipped. It has no prebuilt package, so anyone on Linux builds
+from source. A missing `-fPIC` on the core library is the trap that stops that build; see
+[ARCHITECTURE.md](ARCHITECTURE.md#platform-traps-worth-knowing).
+
 ---
 
 ## Verifying
@@ -196,13 +201,16 @@ they ran on. Anything new that constructs a processor should do the same.
 
 ## Releasing
 
-`.github/workflows/build.yml` builds both platforms on every push to `main`/`master`, runs
-the test suite, and attaches the packages to the run:
+`.github/workflows/build.yml` builds macOS and Windows on every push to `main`/`master` and
+attaches their packages to the run. A third job builds and tests Linux, which ships no
+package and is not a release gate — it is there so a Linux-only build break is caught by CI
+rather than by a user:
 
 | Platform | Artifact |
 |---|---|
 | macOS | `InfinityDrum-macOS-universal.zip` — VST3 and AU, Intel and Apple Silicon in one binary, plus the install script |
 | Windows | `InfinityDrum-Windows-x64.zip` |
+| Linux | none — build and test only, no release artifact |
 
 Pushing a tag starting with `v` turns a build into a release, with both packages attached
 and notes generated from the commits:

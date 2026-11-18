@@ -599,7 +599,7 @@ regardless of how the linker treats the static library.
 `.vst3` as a black box, through the same hosting code a DAW uses, so it must not be able to
 reach into the plugin's internals.
 
-### Two platform traps worth knowing
+### Platform traps worth knowing
 
 - **A `gui_app` on Windows links `/SUBSYSTEM:WINDOWS`, which needs `WinMain`.** Only a
   `JUCEApplication` built with `START_JUCE_APPLICATION` provides one. `InfinityDrumScreenshot`
@@ -607,6 +607,15 @@ reach into the plugin's internals.
   the honest description of a command-line tool that renders offscreen. `HostLoadTest`, by
   contrast, must be a `gui_app`: on macOS JUCE drives the message loop with `[NSApp run]`,
   which only works from a real app bundle.
+- **A static library needs `-fPIC` before it can go into a plugin.** CMake compiles `SHARED`
+  and `MODULE` libraries position-independently by default but not `STATIC` ones, so
+  `InfinityDrumCore` was built without it while the plugin it feeds is a module library.
+  macOS and Windows never complained — PIC is implicit on the first and has no meaning on the
+  second — but on Linux the plugin link stops with `relocation R_X86_64_32S against ... can
+  not be used when making a shared object; recompile with -fPIC`. A Linux user hit this
+  before anyone here did. `POSITION_INDEPENDENT_CODE ON` on the core is the whole fix, and it
+  also covers the offline tools that link the same library. CI now builds and tests on Linux,
+  so a regression fails the pipeline there instead of reaching a user.
 - **Failure reporting in CI.** GitHub returns `403` for job logs unless you have repository
   admin rights, which makes a CI-only failure invisible. The workflow emits `::error::` lines
   instead, because GitHub turns those into check-run annotations and *annotations* are
@@ -668,6 +677,10 @@ Four tools, all of which exit non-zero on failure and run in CI. What each one c
 | `InfinityDrumHostTest` (23 checks) | End-to-end through JUCE's real VST3 hosting code — the same path a DAW takes: bus layout, MIDI, parameter exposure, rendering, editor construction and painting, state save/restore, prepare/release cycles |
 | `InfinityDrumScreenshot` | Editor layout and painting at four window sizes. The only way to check the band and dot actually draw |
 | `InfinityDrumRender` | Writes WAVs for listening. Not an assertion, but the quickest way to hear a regression |
+
+CI runs the suite on all three platforms and `auval` on the macOS AU. The Linux job builds
+every target — including the VST3, which is the only place the `-fPIC` trap can bite — but
+ships no package, so it does not hold back a release.
 
 ### What is not covered
 

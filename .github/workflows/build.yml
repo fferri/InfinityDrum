@@ -174,8 +174,80 @@ jobs:
           if-no-files-found: error
 
   #=============================================================================
-  # Tagging is what turns a build into a download. Both platforms are attached
-  # to one release, so this waits for them.
+  # Linux: build and test only. There is no package, so this job attaches nothing
+  # to a release - it exists to prove the tree builds and passes on Linux at all.
+  #
+  # It earns its place on one specific trap: the VST3 is a shared object and links
+  # InfinityDrumCore, a static library, which CMake builds without PIC unless told
+  # otherwise. macOS and Windows cannot see the difference; on Linux that link stops
+  # with "recompile with -fPIC". Without this job the next person to remove that
+  # property finds out from a user, which is how it was found the first time.
+  #=============================================================================
+  linux:
+    name: Linux (x64)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # JUCE names these in its own Linux prerequisites; the X11 and freetype ones are
+      # needed to compile juce_gui_basics at all, and xvfb gives the GUI code a display
+      # to talk to even though the suite never shows a window.
+      - name: Install JUCE's Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libjack-jackd2-dev libcurl4-openssl-dev \
+            libfreetype-dev libfontconfig1-dev libgl1-mesa-dev libglu1-mesa-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev \
+            libwebkit2gtk-4.1-dev xauth xvfb
+
+      - name: Cache JUCE
+        id: juce-cache
+        uses: actions/cache@v4
+        with:
+          path: JUCE
+          key: juce-${{ env.JUCE_VERSION }}-linux
+
+      - name: Fetch JUCE
+        if: steps.juce-cache.outputs.cache-hit != 'true'
+        run: git clone --depth 1 --branch "$JUCE_VERSION" https://github.com/juce-framework/JUCE.git JUCE
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel 3
+
+      - name: Verify
+        shell: bash
+        run: |
+          set +e
+          xvfb-run -a ./build/InfinityDrumTests_artefacts/Release/InfinityDrumTests > verify.log 2>&1
+          status=$?
+          set -e
+          cat verify.log
+          if [ "$status" -ne 0 ]; then
+            # GitHub turns ::error:: lines into check-run annotations, and annotations are
+            # readable through the API without repository admin rights. Job logs are not.
+            # Without this a failure is only visible to whoever can open the web UI.
+            grep -n "FAIL" verify.log | head -12 | while IFS= read -r line; do
+              echo "::error::${line//%/%25}"
+            done
+            echo "::error::=== last lines before exit ==="
+            tail -n 4 verify.log | while IFS= read -r line; do
+              echo "::error::${line//%/%25}"
+            done
+            echo "::error::the test suite exited $status"
+            exit "$status"
+          fi
+
+  #=============================================================================
+  # Tagging is what turns a build into a download. Both packaged platforms are
+  # attached to one release, so this waits for them. Linux is deliberately not in
+  # `needs`: it ships no package, so a Linux-only break must not hold back a
+  # macOS/Windows release. It still has to be green before tagging - see AGENTS.md.
   #=============================================================================
   release:
     name: Release

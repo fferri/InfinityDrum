@@ -47,6 +47,19 @@ target_link_libraries(InfinityDrumCore PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 
+# CMake only compiles SHARED and MODULE libraries position-independently by default, so a
+# static library is built without PIC unless asked. These objects end up inside the VST3,
+# which is a shared object, and on Linux a non-PIC object cannot be linked into one - the
+# plugin link stops with "relocation R_X86_64_32S against ... can not be used when making
+# a shared object; recompile with -fPIC".
+#
+# macOS and Windows hide this, because PIC is implicit for the first and has no meaning
+# for the second, so nothing failed until someone built the plugin on Linux. Setting the
+# property here covers the offline tools too, which link the same library; the cost is a
+# negligible addressing overhead on x86.
+set_target_properties(InfinityDrumCore PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+
 #===============================================================================
 # The plugin itself.
 #===============================================================================

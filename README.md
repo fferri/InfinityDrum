@@ -72,6 +72,9 @@ self-signed certificate does not help with that either.
 
 If you would rather build it yourself, see [AGENTS.md](AGENTS.md#building).
 
+There is no prebuilt Linux package, but the same commands build the VST3 there — the Audio
+Unit is Apple-only and is skipped. Linux users build from source.
+
 ---
 
 ## Using it
