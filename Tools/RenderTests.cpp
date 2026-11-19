@@ -2405,26 +2405,28 @@ void testMarkovChainAudio()
     setSettingsDirectoryOverride (juce::File::getSpecialLocation (juce::File::tempDirectory)
                                       .getChildFile ("InfinityDrumChainAudioTests"));
 
-    DrumKitProcessor processor;
-    processor.prepareToPlay (sampleRate, 480);
+    // The pattern bank makes DrumKitProcessor large; keep it off the 1 MB
+    // Windows test stack.
+    auto processor = std::make_unique<DrumKitProcessor>();
+    processor->prepareToPlay (sampleRate, 480);
 
     // The live state is deliberately audible: if the chain fell back to it instead of the
     // pattern bank, track 8 would fire and the test would see it.
-    auto& live = processor.getSequencerState();
+    auto& live = processor->getSequencerState();
     live.triggers[7].length = 4;
     live.triggers[7].steps[0].on = true;
 
-    auto& first = processor.getPattern (0);
+    auto& first = processor->getPattern (0);
     first.used = true;
     first.state.triggers[0].length = 16;   // one hit per four-beat state
     first.state.triggers[0].steps[0].on = true;
 
-    auto& second = processor.getPattern (1);
+    auto& second = processor->getPattern (1);
     second.used = true;
     second.state.triggers[1].length = 16;
     second.state.triggers[1].steps[0].on = true;
 
-    auto& chain = processor.getMarkovChain();
+    auto& chain = processor->getMarkovChain();
     chain.enabled = true;
 
     for (int from = 0; from < kNumChainStates; ++from)
@@ -2437,7 +2439,7 @@ void testMarkovChainAudio()
     chain.states[1] = { 1, 0, 16 };
 
     TestPlayHead playHead;
-    processor.setPlayHead (&playHead);
+    processor->setPlayHead (&playHead);
 
     constexpr double beatsPerSample = 1.0 / 24000.0;
     constexpr int block = 480;
@@ -2450,37 +2452,39 @@ void testMarkovChainAudio()
         playHead.ppq = (double) b * block * beatsPerSample;
         buffer.clear();
         juce::MidiBuffer midi;
-        processor.processBlock (buffer, midi);
+        processor->processBlock (buffer, midi);
     }
 
-    check (processor.getTrackTriggerCount (0) == 2,
+    check (processor->getTrackTriggerCount (0) == 2,
            "pattern 1 fires twice",
-           juce::String (processor.getTrackTriggerCount (0)));
-    check (processor.getTrackTriggerCount (1) == 2,
+           juce::String (processor->getTrackTriggerCount (0)));
+    check (processor->getTrackTriggerCount (1) == 2,
            "pattern 2 fires twice",
-           juce::String (processor.getTrackTriggerCount (1)));
-    check (processor.getTrackTriggerCount (7) == 0,
+           juce::String (processor->getTrackTriggerCount (1)));
+    check (processor->getTrackTriggerCount (7) == 0,
            "and the live state is not what played",
-           juce::String (processor.getTrackTriggerCount (7)));
-    check (processor.getChainActiveState() == 1,
+           juce::String (processor->getTrackTriggerCount (7)));
+    check (processor->getChainActiveState() == 1,
            "the chain ends in state 2",
-           juce::String (processor.getChainActiveState()));
+           juce::String (processor->getChainActiveState()));
 
-    processor.setPlayHead (nullptr);
-    processor.releaseResources();
+    processor->setPlayHead (nullptr);
+    processor->releaseResources();
 }
 
 void testFreshSequencerSilence()
 {
     section ("A fresh instance is silent under the transport");
 
-    DrumKitProcessor processor;
-    processor.prepareToPlay (sampleRate, 480);
+    // The pattern bank makes DrumKitProcessor large; keep it off the 1 MB
+    // Windows test stack.
+    auto processor = std::make_unique<DrumKitProcessor>();
+    processor->prepareToPlay (sampleRate, 480);
 
     TestPlayHead playHead;
     playHead.ppq = 0.0;
     playHead.playing = true;
-    processor.setPlayHead (&playHead);
+    processor->setPlayHead (&playHead);
 
     juce::AudioBuffer<float> buffer (2, 480);
     const double beatsPerSample = 120.0 / (60.0 * sampleRate);
@@ -2494,7 +2498,7 @@ void testFreshSequencerSilence()
             playHead.ppq = (double) b * 480.0 * beatsPerSample;
             buffer.clear();
             juce::MidiBuffer midi;
-            processor.processBlock (buffer, midi);
+            processor->processBlock (buffer, midi);
             peak = juce::jmax (peak, buffer.getMagnitude (0, buffer.getNumSamples()));
         }
 
@@ -2506,13 +2510,13 @@ void testFreshSequencerSilence()
 
     // The chain's fallback to the live state must not turn an empty instance into a
     // pattern: all sixteen slots are unused here.
-    processor.getMarkovChain().enabled = true;
+    processor->getMarkovChain().enabled = true;
 
     check (renderBlocks (200, 200) == 0.0f,
            "an empty chain bank falls back to the empty live state and stays silent");
 
-    processor.setPlayHead (nullptr);
-    processor.releaseResources();
+    processor->setPlayHead (nullptr);
+    processor->releaseResources();
 }
 
 void testMarkovChainPersistence()
@@ -2522,54 +2526,56 @@ void testMarkovChainPersistence()
     setSettingsDirectoryOverride (juce::File::getSpecialLocation (juce::File::tempDirectory)
                                       .getChildFile ("InfinityDrumChainSaveTests"));
 
-    DrumKitProcessor source;
+    // Two of these on the 1 MB Windows stack would overflow it before the
+    // suite could print a FAIL line.
+    auto source = std::make_unique<DrumKitProcessor>();
 
-    auto& live = source.getSequencerState();
+    auto& live = source->getSequencerState();
     live.triggers[2].length = 5;
     live.triggers[2].steps[0].on = true;
-    source.capturePattern (0);
+    source->capturePattern (0);
 
     live.triggers[2].steps[0].on = false;
     live.triggers[3].length = 7;
     live.triggers[3].steps[1].on = true;
-    source.capturePattern (1);
+    source->capturePattern (1);
 
-    auto& chain = source.getMarkovChain();
+    auto& chain = source->getMarkovChain();
     chain.enabled = true;
     chain.states[0] = { 1, 8, 24 };
     chain.states[1] = { 0, 0, 4 };
     chain.setTransition (0, 1, 0.25f);
 
     juce::MemoryBlock saved;
-    source.getStateInformation (saved);
+    source->getStateInformation (saved);
 
-    DrumKitProcessor restored;
-    restored.setStateInformation (saved.getData(), (int) saved.getSize());
+    auto restored = std::make_unique<DrumKitProcessor>();
+    restored->setStateInformation (saved.getData(), (int) saved.getSize());
 
-    check (restored.getPattern (0).used && restored.getPattern (1).used,
+    check (restored->getPattern (0).used && restored->getPattern (1).used,
            "both captured patterns come back");
-    check (restored.getPattern (0).state.triggers[2].length == 5
-             && restored.getPattern (0).state.triggers[2].steps[0].on,
+    check (restored->getPattern (0).state.triggers[2].length == 5
+             && restored->getPattern (0).state.triggers[2].steps[0].on,
            "with the first pattern's steps");
-    check (restored.getPattern (1).state.triggers[3].length == 7
-             && restored.getPattern (1).state.triggers[3].steps[1].on,
+    check (restored->getPattern (1).state.triggers[3].length == 7
+             && restored->getPattern (1).state.triggers[3].steps[1].on,
            "and the second pattern's steps");
-    check (! restored.getPattern (2).used, "an unused slot stays unused");
+    check (! restored->getPattern (2).used, "an unused slot stays unused");
 
-    check (restored.getMarkovChain().enabled, "the chain comes back enabled");
-    check (restored.getMarkovChain().states[0].pattern == 1
-             && restored.getMarkovChain().states[0].offsetSteps == 8
-             && restored.getMarkovChain().states[0].loopSteps == 24,
+    check (restored->getMarkovChain().enabled, "the chain comes back enabled");
+    check (restored->getMarkovChain().states[0].pattern == 1
+             && restored->getMarkovChain().states[0].offsetSteps == 8
+             && restored->getMarkovChain().states[0].loopSteps == 24,
            "with the state's pattern, offset and loop",
-           juce::String (restored.getMarkovChain().states[0].pattern) + "/"
-             + juce::String (restored.getMarkovChain().states[0].offsetSteps) + "/"
-             + juce::String (restored.getMarkovChain().states[0].loopSteps));
-    check (std::abs (restored.getMarkovChain().transition (0, 1) - 0.25f) < 1.0e-3f,
+           juce::String (restored->getMarkovChain().states[0].pattern) + "/"
+             + juce::String (restored->getMarkovChain().states[0].offsetSteps) + "/"
+             + juce::String (restored->getMarkovChain().states[0].loopSteps));
+    check (std::abs (restored->getMarkovChain().transition (0, 1) - 0.25f) < 1.0e-3f,
            "and the transition probability",
-           juce::String (restored.getMarkovChain().transition (0, 1)));
-    check (std::abs (restored.getMarkovChain().rowSum (0) - 1.0f) < 1.0e-4f,
+           juce::String (restored->getMarkovChain().transition (0, 1)));
+    check (std::abs (restored->getMarkovChain().rowSum (0) - 1.0f) < 1.0e-4f,
            "with the row normalised");
-    check (restored.getUiGeneration() > 0, "and the editor is told to refresh");
+    check (restored->getUiGeneration() > 0, "and the editor is told to refresh");
 }
 
 void testKitLoadLeavesControlsFree()
@@ -2841,13 +2847,15 @@ void testEditorNoteLabels()
     // This is the wiring the audio tests cannot see. It was wrong once - the refresh
     // landed in the strip's constructor rather than on the editor's timer, so the label
     // was correct on open and then never moved when the map changed.
-    DrumKitProcessor processor;
-    processor.prepareToPlay (sampleRate, blockSize);
+    // One of these plus two editors is enough to matter on the 1 MB Windows
+    // stack now that the processor carries the pattern bank.
+    auto processor = std::make_unique<DrumKitProcessor>();
+    processor->prepareToPlay (sampleRate, blockSize);
 
-    DrumKitEditor editor (processor);
+    DrumKitEditor editor (*processor);
     editor.setSize (1280, 752);
 
-    processor.setNoteMap (NoteMap::generalMidi);
+    processor->setNoteMap (NoteMap::generalMidi);
     editor.refreshFromProcessor();
 
     check (editor.getTrackNoteLabel (0).contains ("36"), "track 1 shows the General MIDI kick note",
@@ -2855,7 +2863,7 @@ void testEditorNoteLabels()
     check (editor.getTrackNoteLabel (2).contains ("42"), "and track 3 the General MIDI hat note",
            editor.getTrackNoteLabel (2));
 
-    processor.setNoteMap (NoteMap::beatStepPro);
+    processor->setNoteMap (NoteMap::beatStepPro);
     editor.refreshFromProcessor();
 
     check (editor.getTrackNoteLabel (0).contains ("39"),
@@ -2867,8 +2875,8 @@ void testEditorNoteLabels()
            "with no trace of the old note left behind", editor.getTrackNoteLabel (0));
 
     // The label also has to be right for an editor opened while a map is already selected.
-    processor.setNoteMap (NoteMap::beatStepPro);
-    DrumKitEditor reopened (processor);
+    processor->setNoteMap (NoteMap::beatStepPro);
+    DrumKitEditor reopened (*processor);
     reopened.setSize (1280, 752);
 
     check (reopened.getTrackNoteLabel (7).contains ("83"),
@@ -2895,7 +2903,7 @@ void testEditorNoteLabels()
     editor.setMode (EditorUiState::Mode::synth);
     check (editor.getMode() == EditorUiState::Mode::synth, "and back to the synth page");
 
-    processor.setNoteMap (NoteMap::generalMidi);
+    processor->setNoteMap (NoteMap::generalMidi);
 }
 
 } // namespace
