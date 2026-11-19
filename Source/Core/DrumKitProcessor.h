@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <memory>
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -97,12 +98,12 @@ public:
 
     Pattern& getPattern (int index) noexcept
     {
-        return patterns[(size_t) juce::jlimit (0, kNumPatterns - 1, index)];
+        return (*patterns)[(size_t) juce::jlimit (0, kNumPatterns - 1, index)];
     }
 
     const Pattern& getPattern (int index) const noexcept
     {
-        return patterns[(size_t) juce::jlimit (0, kNumPatterns - 1, index)];
+        return (*patterns)[(size_t) juce::jlimit (0, kNumPatterns - 1, index)];
     }
 
     /** Copies the live SEQ/AUTO state into a pattern slot, and marks the slot used. */
@@ -194,8 +195,12 @@ private:
 
     /** The pattern bank: snapshots of the live state, plus the chain that selects among
         them. Like the lanes, the audio thread reads them on the message thread's word; a
-        race can only let one block hear a half-applied pattern. */
-    std::array<Pattern, (size_t) kNumPatterns> patterns {};
+        race can only let one block hear a half-applied pattern.
+
+        Heap-allocated because sixteen full SequencerState snapshots are about 300 kB, and
+        hosts and the offline tools put DrumKitProcessor on the stack. The pointer is set
+        once in the constructor and never moved, so the audio thread reads a stable array. */
+    std::unique_ptr<std::array<Pattern, (size_t) kNumPatterns>> patterns;
 
     MarkovChain markovChain;
 

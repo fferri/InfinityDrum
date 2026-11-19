@@ -13,6 +13,8 @@ DrumKitProcessor::DrumKitProcessor()
       apvts (*this, nullptr, "PARAMETERS", createParameterLayout()),
       modulation (apvts)
 {
+    patterns = std::make_unique<std::array<Pattern, (size_t) kNumPatterns>>();
+
     cacheParameterPointers (apvts, trackRefs, globalRefs);
     cacheModulationTargets (apvts, modRefs);
 
@@ -52,17 +54,17 @@ void DrumKitProcessor::capturePattern (int index)
     if (! juce::isPositiveAndBelow (index, kNumPatterns))
         return;
 
-    patterns[(size_t) index].state = sequencer;
-    patterns[(size_t) index].used = true;
+    (*patterns)[(size_t) index].state = sequencer;
+    (*patterns)[(size_t) index].used = true;
     uiGeneration.fetch_add (1, std::memory_order_relaxed);
 }
 
 void DrumKitProcessor::loadPattern (int index)
 {
-    if (! juce::isPositiveAndBelow (index, kNumPatterns) || ! patterns[(size_t) index].used)
+    if (! juce::isPositiveAndBelow (index, kNumPatterns) || ! (*patterns)[(size_t) index].used)
         return;
 
-    sequencer = patterns[(size_t) index].state;
+    sequencer = (*patterns)[(size_t) index].state;
     uiGeneration.fetch_add (1, std::memory_order_relaxed);
 }
 
@@ -71,7 +73,7 @@ void DrumKitProcessor::clearPattern (int index)
     if (! juce::isPositiveAndBelow (index, kNumPatterns))
         return;
 
-    patterns[(size_t) index] = Pattern {};
+    (*patterns)[(size_t) index] = Pattern {};
     uiGeneration.fetch_add (1, std::memory_order_relaxed);
 }
 
@@ -192,7 +194,7 @@ void DrumKitProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
             if (! wasChainEnabled || resetRequested)
                 chainPlayer.reset (markovChain, ppq);
 
-            chainPlayer.advance (markovChain, patterns, sequencer, ppq, beatsPerSample,
+            chainPlayer.advance (markovChain, *patterns, sequencer, ppq, beatsPerSample,
                                  numSamples, playing);
 
             if (const auto* active = chainPlayer.activePattern())
@@ -547,7 +549,7 @@ void DrumKitProcessor::getStateInformation (juce::MemoryBlock& destData)
             state.removeChild (existing, nullptr);
 
     state.appendChild (sequencerStateToValueTree (sequencer), nullptr);
-    state.appendChild (patternsToValueTree (patterns), nullptr);
+    state.appendChild (patternsToValueTree (*patterns), nullptr);
     state.appendChild (markovChainToValueTree (markovChain), nullptr);
 
     if (auto xml = state.createXml())
@@ -570,7 +572,7 @@ void DrumKitProcessor::setStateInformation (const void* data, int sizeInBytes)
                                          sequencer);
 
             patternsFromValueTree (apvts.state.getChildWithName (juce::Identifier ("PATTERNS")),
-                                   patterns);
+                                   *patterns);
             markovChainFromValueTree (apvts.state.getChildWithName (juce::Identifier ("CHAIN")),
                                       markovChain);
 
